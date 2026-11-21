@@ -222,6 +222,7 @@ async def update_chat(chat_id, data: ChatBody):
     app.cl.send_event("update_chat", updated_vals, usernames=chat["members"])
 
     # Return chat
+    chat.update(updated_vals)
     chat.update({
         "error": False,
         "emojis": list(db.chat_emojis.find({
