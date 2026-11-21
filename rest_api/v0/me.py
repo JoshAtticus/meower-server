@@ -204,6 +204,31 @@ async def get_relationships():
     }, 200
 
 
+@me_bp.get("/friends")
+async def get_friends():
+    # Check authorization
+    if not request.user:
+        abort(401)
+
+    # Relationships I have toward others
+    mine = {r["_id"]["to"]: r["state"] for r in db.relationships.find({"_id.from": request.user})}
+
+    # Users who have sent me a friend request (state 1 toward me)
+    incoming_requests = {r["_id"]["from"] for r in db.relationships.find({
+        "_id.to": request.user,
+        "state": 1
+    })}
+
+    outgoing = {u for u, state in mine.items() if state == 1}
+    friends = sorted(outgoing & incoming_requests)
+    return {
+        "error": False,
+        "friends": friends,
+        "incoming": sorted(incoming_requests - outgoing - {u for u, s in mine.items() if s == 2}),
+        "outgoing": sorted(outgoing - incoming_requests)
+    }, 200
+
+
 @me_bp.patch("/password")
 @validate_request(ChangePasswordBody)
 async def change_password(data: ChangePasswordBody):

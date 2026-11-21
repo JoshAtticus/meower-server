@@ -18,7 +18,7 @@ class GetPostsQueryArgs(BaseModel):
 class UpdateRelationshipBody(BaseModel):
     state: Literal[
         0,  # no relationship
-        #1,  # following (doesn't do anything yet)
+        1,  # friend request / friend (when mutual)
         2,  # blocking
     ]
 
@@ -118,6 +118,12 @@ async def update_relationship(username, data: UpdateRelationshipBody):
             "updated_at": None
         }
 
+    # Removing a relationship also clears a pending friend request from them
+    if data.state == 0:
+        res = db.relationships.delete_one({"_id": {"from": username, "to": request.user}, "state": 1})
+        if res.deleted_count:
+            app.cl.send_event("update_friends", {}, usernames=[request.user, username])
+
     # Make sure the state relationship state changed
     if data.state == relationship["state"]:
         del relationship["_id"]
@@ -130,6 +136,22 @@ async def update_relationship(username, data: UpdateRelationshipBody):
         db.relationships.delete_one({"_id": {"from": request.user, "to": username}})
     else:
         db.relationships.update_one({"_id": {"from": request.user, "to": username}}, {"$set": relationship}, upsert=True)
+
+    # Friend request/friendship notifications
+    if data.state == 1:
+        reciprocal = db.relationships.find_one({"_id": {"from": username, "to": request.user}, "state": 1})
+        if reciprocal:
+            app.supporter.create_post("inbox", username, f"@{request.user} accepted your friend request!")
+            app.supporter.create_post("inbox", request.user, f"You are now friends with @{username}!")
+        else:
+            app.supporter.create_post("inbox", username, f"@{request.user} sent you a friend request! Visit their profile to accept it.")
+        app.cl.send_event("update_friends", {}, usernames=[request.user, username])
+    elif data.state == 0:
+        app.cl.send_event("update_friends", {}, usernames=[request.user, username])
+    elif data.state == 2:
+        # Blocking someone also removes any friend request/friendship from them
+        db.relationships.delete_one({"_id": {"from": username, "to": request.user}, "state": 1})
+        app.cl.send_event("update_friends", {}, usernames=[request.user, username])
 
     # Sync relationship between sessions
     app.cl.send_event("update_relationship", {
