@@ -87,7 +87,7 @@ async def check_auth(headers: TokenHeader):
 async def index():
     return {
         "captcha": {
-            "enabled": os.getenv("CAPTCHA_SECRET") is not None,
+            "enabled": bool(os.getenv("CAPTCHA_SECRET")),
             "sitekey": os.getenv("CAPTCHA_SITEKEY")
         }
     }, 200
