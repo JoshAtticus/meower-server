@@ -158,10 +158,14 @@ async def register(data: AuthRequest):
 
     # Check captcha
     if os.getenv("CAPTCHA_SECRET"):
-        if not requests.post("https://api.hcaptcha.com/siteverify", data={
-            "secret": os.getenv("CAPTCHA_SECRET"),
-            "response": data.captcha,
-        }).json()["success"]:
+        try:
+            captcha_valid = requests.post("https://api.hcaptcha.com/siteverify", data={
+                "secret": os.getenv("CAPTCHA_SECRET"),
+                "response": data.captcha,
+            }, timeout=10).json()["success"]
+        except requests.RequestException:
+            captcha_valid = False
+        if not captcha_valid:
             return {"error": True, "type": "invalidCaptcha"}, 403
 
     # Create account
