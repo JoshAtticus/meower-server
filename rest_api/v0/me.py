@@ -526,6 +526,7 @@ async def get_current_data_export():
         path = data_export_builder.export_path(data_export["_id"])
         if os.path.exists(path):
             data_export["size"] = os.path.getsize(path)
+        data_export["expires_at"] = data_export["completed_at"] + data_export_builder.EXPORT_TTL
 
     # Return data export request
     return data_export, 200

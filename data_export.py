@@ -79,3 +79,27 @@ def _process(export_id: str, username: str):
 
 def start_export(export_id: str, username: str):
     Thread(target=_process, args=(export_id, username), daemon=True).start()
+
+
+def cleanup_expired():
+    """Delete expired export zips and mark them expired."""
+    cutoff = int(time.time()) - EXPORT_TTL
+    for export in db.data_exports.find({
+        "status": "completed",
+        "completed_at": {"$lte": cutoff}
+    }, projection={"_id": 1}):
+        try:
+            if os.path.exists(export_path(export["_id"])):
+                os.remove(export_path(export["_id"]))
+            db.data_exports.update_one({"_id": export["_id"]}, {"$set": {"status": "expired"}})
+        except Exception as e:
+            log(f"Failed to clean up data export {export['_id']}: {e}")
+
+
+def cleanup_loop():
+    while True:
+        try:
+            cleanup_expired()
+        except Exception as e:
+            log(f"Data export cleanup failed: {e}")
+        time.sleep(3600)

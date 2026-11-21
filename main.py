@@ -11,6 +11,7 @@ from threading import Thread
 from cloudlink import CloudlinkServer
 from supporter import Supporter
 from security import background_tasks_loop
+from data_export import cleanup_loop as data_export_cleanup_loop
 from rest_api import app as rest_api
 
 
@@ -35,6 +36,9 @@ if __name__ == "__main__":
 
     # Start background tasks loop
     Thread(target=background_tasks_loop, daemon=True).start()
+
+    # Delete expired data exports
+    Thread(target=data_export_cleanup_loop, daemon=True).start()
 
     # Initialise REST API
     rest_api.cl = cl
