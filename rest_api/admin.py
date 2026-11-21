@@ -74,7 +74,7 @@ class ClearUserPostsQueryArgs(BaseModel):
 class UpdateChatBody(BaseModel):
     nickname: str = Field(default=None, min_length=1, max_length=32)
     icon: str = Field(default=None, max_length=24)
-    icon_color: str = Field(default=None, pattern=r"^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")
+    icon_color: str = Field(default=None, min_length=1, max_length=6)
     allow_pinning: bool = Field(default=None)
 
     class Config:
