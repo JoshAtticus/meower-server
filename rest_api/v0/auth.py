@@ -1,4 +1,4 @@
-import re, os, requests, pyotp, secrets
+import re, os, time, requests, pyotp, secrets
 from pydantic import BaseModel
 from quart import Blueprint, request, abort, current_app as app
 from quart_schema import validate_request
@@ -31,6 +31,7 @@ async def login(data: AuthRequest):
         "flags": 1,
         "tokens": 1,
         "pswd": 1,
+        "prev_pswd": 1,
         "mfa_recovery_code": 1
     })
     if not account:
@@ -69,6 +70,19 @@ async def login(data: AuthRequest):
 
         # Abort if password is invalid
         if not password_valid:
+            # Maybe they're using a recently-changed previous password
+            prev_pswd = account.get("prev_pswd")
+            if (
+                prev_pswd
+                and (time.time() - prev_pswd["changed_at"] < 1209600)  # 14 days
+                and security.check_password_hash(data.password, prev_pswd["hash"])
+            ):
+                return {
+                    "error": True,
+                    "type": "passwordRecentlyChanged",
+                    "changed_at": prev_pswd["changed_at"]
+                }, 401
+
             security.ratelimit(f"login:u:{account['_id']}", 5, 60)
             abort(401)
 

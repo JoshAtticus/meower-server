@@ -221,8 +221,15 @@ async def change_password(data: ChangePasswordBody):
         security.ratelimit(f"login:u:{request.user}", 5, 60)
         return {"error": True, "type": "invalidCredentials"}, 401
 
-    # Update password
-    db.usersv0.update_one({"_id": request.user}, {"$set": {"pswd": security.hash_password(data.new)}})
+    # Update password and remember the previous hash for 14 days
+    db.usersv0.update_one({"_id": request.user}, {"$set": {
+        "pswd": security.hash_password(data.new),
+        "prev_pswd": {
+            "hash": account["pswd"],
+            "changed_at": int(time.time()),
+            "ip": request.ip
+        }
+    }})
 
     # Send alert
     app.supporter.create_post("inbox", account["_id"], "Your account password has been changed. If this wasn't requested by you, please secure your account immediately.")

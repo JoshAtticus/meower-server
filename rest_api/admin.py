@@ -841,6 +841,39 @@ async def kick_user(username):
     return {"error": False}, 200
 
 
+@admin_bp.post("/users/<username>/restore-password")
+async def restore_user_password(username):
+    # Check permissions
+    if not security.has_permission(request.permissions, security.AdminPermissions.SYSADMIN):
+        abort(401)
+
+    # Get previous password
+    account = db.usersv0.find_one({"_id": username}, projection={"prev_pswd": 1})
+    if not account or not account.get("prev_pswd"):
+        abort(404)
+
+    # Restore previous password and revoke sessions
+    db.usersv0.update_one({"_id": username}, {"$set": {
+        "pswd": account["prev_pswd"]["hash"],
+        "prev_pswd": None,
+        "tokens": []
+    }})
+
+    # Kick clients
+    for client in app.cl.usernames.get(username, []):
+        client.kick()
+
+    # Notify user
+    app.supporter.create_post("inbox", username, "Your account password was reverted to a previous password by a moderator. If you did not request this, please secure your account immediately.")
+
+    # Add log
+    security.add_audit_log(
+        "restored_password", request.user, request.ip, {"username": username}
+    )
+
+    return {"error": False}, 200
+
+
 @admin_bp.delete("/users/<username>/avatar")
 async def clear_avatar(username):
     # Check permissions
