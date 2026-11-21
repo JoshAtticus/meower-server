@@ -454,7 +454,7 @@ async def delete_post(query_args: PostIdQueryArgs):
             "_id": post["post_origin"],
             "members": request.user,
             "deleted": False
-        }, projection={"owner": 1, "members": 1})
+        }, projection={"owner": 1, "members": 1, "type": 1, "announce_deletes": 1, "announce_deleter": 1})
         if not chat:
             abort(404)
     if post["post_origin"] == "inbox" or post["u"] != request.user:
@@ -479,6 +479,19 @@ async def delete_post(query_args: PostIdQueryArgs):
         "chat_id": post["post_origin"],
         "post_id": query_args.id
     }, usernames=(None if post["post_origin"] == "home" else chat["members"]))
+
+    # Announce the deletion in group chats that have it enabled
+    if post["post_origin"] not in {"home", "inbox"} \
+            and chat["type"] == 0 \
+            and chat.get("announce_deletes", False) \
+            and post["u"] != "Server":
+        if not chat.get("announce_deleter", False):
+            text = f"A message from @{post['u']} was deleted."
+        elif request.user == post["u"]:
+            text = f"@{request.user} deleted their message."
+        else:
+            text = f"@{request.user} deleted a message from @{post['u']}."
+        app.supporter.create_post(chat["_id"], "Server", text, chat_members=chat["members"])
 
     return {"error": False}, 200
 

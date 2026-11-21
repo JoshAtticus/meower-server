@@ -20,6 +20,8 @@ class ChatBody(BaseModel):
     icon: str = Field(default=None, max_length=24)
     icon_color: str = Field(default=None, min_length=6, max_length=6)  # hex code without the #
     allow_pinning: bool = Field(default=None)
+    announce_deletes: bool = Field(default=None)
+    announce_deleter: bool = Field(default=None)
 
     class Config:
         validate_assignment = True
@@ -113,6 +115,8 @@ async def create_chat(data: ChatBody):
         "last_active": int(time.time()),
         "deleted": False,
         "allow_pinning": data.allow_pinning,
+        "announce_deletes": False,
+        "announce_deleter": False,
         "bans": []
     }
     db.chats.insert_one(chat)
@@ -219,6 +223,11 @@ async def update_chat(chat_id, data: ChatBody):
             app.supporter.create_post(chat_id, "Server", f"@{request.user} changed the icon of the group chat.", chat_members=chat["members"])
     if data.allow_pinning is not None:
         updated_vals["allow_pinning"] = data.allow_pinning
+    if chat["type"] == 0:
+        if data.announce_deletes is not None:
+            updated_vals["announce_deletes"] = data.announce_deletes
+        if data.announce_deleter is not None:
+            updated_vals["announce_deleter"] = data.announce_deleter
     
     # Update chat
     db.chats.update_one({"_id": chat_id}, {"$set": updated_vals})
