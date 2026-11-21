@@ -746,8 +746,9 @@ async def ban_chat_member(chat_id, username, data: BanBody):
     if chat["owner"] != request.user:
         abort(403)
 
-    # Make sure the target is a member and isn't the owner
-    if username not in chat["members"] or username == chat["owner"]:
+    # Make sure the target is a member (or already banned) and isn't the owner
+    is_member = username in chat["members"]
+    if username == chat["owner"] or not (is_member or security.chat_ban(chat, username)):
         abort(400)
 
     # Replace any existing ban for the user
@@ -763,13 +764,15 @@ async def ban_chat_member(chat_id, username, data: BanBody):
         "$pull": {"members": username}
     })
     chat["bans"] = [b for b in chat.get("bans", []) if b["username"] != username] + [ban]
-    chat["members"].remove(username)
+    if is_member:
+        chat["members"].remove(username)
 
     # Revoke any pending invites for and from the user
     db.chat_invites.delete_many({"chat_id": chat_id, "$or": [{"to": username}, {"from": username}]})
 
     # Send delete chat event to user
-    app.cl.send_event("delete_chat", {"chat_id": chat_id}, usernames=[username])
+    if is_member:
+        app.cl.send_event("delete_chat", {"chat_id": chat_id}, usernames=[username])
 
     # Send update chat event
     app.cl.send_event("update_chat", {
