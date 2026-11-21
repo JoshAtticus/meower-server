@@ -401,7 +401,7 @@ async def get_new_totp_secret():
     provisioning_uri = pyotp.TOTP(secret).provisioning_uri(name=request.user, issuer_name="Meower")
 
     # Create QR code
-    qr = qrcode.make(provisioning_uri, image_factory=qrcode.image.svg.SvgImage)
+    qr = qrcode.make(provisioning_uri, image_factory=qrcode.image.svg.SvgPathImage)
 
     return {
         "error": False,
