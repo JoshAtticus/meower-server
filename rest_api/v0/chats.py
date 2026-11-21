@@ -202,12 +202,17 @@ async def update_chat(chat_id, data: ChatBody):
                 return {"error": True, "type": "unableToClaimIcon"}, 500
             else:
                 updated_vals["icon"] = data.icon
+        else:
+            updated_vals["icon"] = ""
         if chat["icon"]:
             try:
                 unclaim_file(chat["icon"])
             except Exception as e:
                 log(f"Unable to delete icon: {e}")
-        app.supporter.create_post(chat_id, "Server", f"@{request.user} changed the icon of the group chat.", chat_members=chat["members"])
+        if data.icon:
+            app.supporter.create_post(chat_id, "Server", f"@{request.user} changed the icon of the group chat.", chat_members=chat["members"])
+        else:
+            app.supporter.create_post(chat_id, "Server", f"@{request.user} removed the icon of the group chat.", chat_members=chat["members"])
     if data.icon_color is not None and chat["icon_color"] != data.icon_color:
         updated_vals["icon_color"] = data.icon_color
         if data.icon is None or chat["icon"] == data.icon:
