@@ -16,6 +16,7 @@ PERMISSIONS = {
     "delete_icon": 0,
     "pin_messages": 0,
     "unpin_messages": 0,
+    "add_reactions": 0,
     "delete_others_messages": 1,
     "remove_members": 1,
     "ban_members": 2,
@@ -31,7 +32,7 @@ ADMIN_TIER = 4
 
 # (id, name, tier, granted permissions)
 PRESET_ROLES = [
-    ("default", "Default", 0, ["send_messages", "delete_own_messages", "invite_members"]),
+    ("default", "Default", 0, ["send_messages", "delete_own_messages", "invite_members", "add_reactions"]),
     ("stickerer", "Stickerer", 0, ["add_emotes", "edit_emotes", "delete_emotes"]),
     ("customiser", "Customiser", 0, ["change_color", "change_name", "change_icon", "delete_icon"]),
     ("pinner", "Pinner", 0, ["pin_messages", "unpin_messages"]),
@@ -144,7 +145,8 @@ def ensure_roles(chat: dict) -> dict:
         "$set": {
             "roles": chat["roles"],
             "member_roles": member_roles,
-            "invites_enabled": True
+            "invites_enabled": True,
+            "reactions_perm_migrated": True
         },
         "$unset": {"allow_pinning": ""}
     })
@@ -168,5 +170,6 @@ def purpose_defaults(purpose) -> tuple:
     elif purpose == "private":
         invites_enabled = False
     elif purpose in ("announcements", "emojis"):
-        default_role["permissions"] = {}
+        # Members can't post, but can still react
+        default_role["permissions"] = {"add_reactions": True}
     return roles, invites_enabled

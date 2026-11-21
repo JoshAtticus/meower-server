@@ -151,6 +151,7 @@ async def create_chat(data: ChatBody):
         "roles": roles,
         "member_roles": {request.user: ["default", "administrator"]},
         "invites_enabled": invites_enabled,
+        "reactions_perm_migrated": True,
         "bans": []
     }
     db.chats.insert_one(chat)

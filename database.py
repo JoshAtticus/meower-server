@@ -349,4 +349,14 @@ for chat in db.chats.find({"type": 0, "roles": {"$exists": False}}, projection={
     log(f"[Migrator] Adding roles to group chat {chat['_id']}")
     chat_permissions.ensure_roles(db.chats.find_one({"_id": chat["_id"]}))
 
+# Reactions permission: grant it to the Default role once per existing chat
+# (the marker keeps later edits to the permission from being overwritten)
+for chat in db.chats.find({"type": 0, "roles": {"$exists": True}, "reactions_perm_migrated": {"$ne": True}}, projection={"_id": 1}):
+    log(f"[Migrator] Adding reactions permission to group chat {chat['_id']}")
+    db.chats.update_one(
+        {"_id": chat["_id"], "roles._id": "default"},
+        {"$set": {"roles.$.permissions.add_reactions": True}}
+    )
+    db.chats.update_one({"_id": chat["_id"]}, {"$set": {"reactions_perm_migrated": True}})
+
 print("") # finished startup logs

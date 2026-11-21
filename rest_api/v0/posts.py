@@ -787,12 +787,15 @@ async def add_post_reaction(post_id: str, emoji_reaction: str):
     elif post["post_origin"] == "inbox" and post["u"] not in ["Server", request.user]:
         abort(404)
     elif post["post_origin"] not in ["home", "inbox"]:
-        if not db.chats.count_documents({
+        chat = db.chats.find_one({
             "_id": post["post_origin"],
             "members": request.user,
             "deleted": False
-        }, limit=1):
+        })
+        if not chat:
             abort(404)
+        if chat["type"] == 0 and not chat_permissions.has(chat_permissions.ensure_roles(chat), request.user, "add_reactions"):
+            return {"error": True, "type": "missingPermission"}, 403
 
     # Make sure there's not too many reactions (50)
     if len(post["reactions"]) >= 50:
