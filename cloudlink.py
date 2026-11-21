@@ -44,6 +44,7 @@ class CloudlinkServer:
             #"TooManyUserNameChanges": "E:121 | Too Many Username Changes",  -- deprecated
             #"Disabled": "E:122 | Command disabled by sysadmin",  -- deprecated
             "PasswordInvalid": "I:011 | Invalid Password",
+            "PasswordRecentlyChanged": "E:126 | Password recently changed",
             "IDExists": "I:015 | Account exists",
             "2FARequired": "I:016 | 2FA Required",
             #"MissingPermissions": "I:017 | Missing permissions",  -- deprecated
@@ -344,6 +345,8 @@ class CloudlinkClient:
                     self.send_statuscode("IDExists", listener)
                 case "Unauthorized":
                     self.send_statuscode("PasswordInvalid", listener)
+                case "passwordRecentlyChanged":
+                    self.send("statuscode", self.server.statuscodes["PasswordRecentlyChanged"], extra={"changed_at": resp.get("changed_at")}, listener=listener)
                 case "mfaRequired":
                     self.send_statuscode("2FARequired", listener)
                 case "accountDeleted":
