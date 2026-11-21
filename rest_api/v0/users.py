@@ -21,6 +21,7 @@ class UpdateRelationshipBody(BaseModel):
         1,  # friend request / friend (when mutual)
         2,  # blocking
     ]
+    notify: Optional[bool] = Field(default=False)
 
     class Config:
         validate_assignment = True
@@ -139,7 +140,7 @@ async def update_relationship(username, data: UpdateRelationshipBody):
         db.relationships.update_one({"_id": {"from": request.user, "to": username}}, {"$set": relationship}, upsert=True)
 
     # Unblocking someone restarts the expiry countdown on any DM request
-    # they sent the requester
+    # they sent the requester, and removes the block notice from their DM
     if was_blocked:
         for dm in db.chats.find({
             "type": 1,
@@ -151,6 +152,88 @@ async def update_relationship(username, data: UpdateRelationshipBody):
             db.chats.update_one({"_id": dm["_id"]}, {
                 "$set": {"dm_request.created": int(time.time())}
             })
+        dm = db.chats.find_one({
+            "type": 1,
+            "members": {"$all": [request.user, username]},
+            "deleted": False
+        }, projection={"members": 1, "block_notice": 1})
+        if dm and dm.get("block_notice") == request.user:
+            db.chats.update_one({"_id": dm["_id"]}, {
+                "$unset": {"block_notice": ""}
+            })
+            app.cl.send_event("update_chat", {
+                "_id": dm["_id"],
+                "block_notice": None
+            }, usernames=dm["members"])
+
+    # Optionally let the blocked user know they were blocked by giving them
+    # the DM with a block notice
+    if data.state == 2 and data.notify:
+        dm = db.chats.find_one({
+            "type": 1,
+            "members": {"$all": [request.user, username]},
+            "deleted": False
+        })
+        if not dm:
+            dm = {
+                "_id": str(uuid.uuid4()),
+                "type": 1,
+                "nickname": None,
+                "owner": None,
+                "members": [request.user, username],
+                "created": int(time.time()),
+                "last_active": int(time.time()),
+                "deleted": False
+            }
+            if not security.are_friends(request.user, username):
+                # Keep the message request rules if they're unblocked later
+                dm["dm_request"] = {
+                    "from": None,
+                    "to": None,
+                    "created": 0,
+                    "first_message_sent": False,
+                    "ignored": False
+                }
+            db.chats.insert_one(dm)
+        db.chats.update_one({"_id": dm["_id"]}, {
+            "$set": {"block_notice": request.user}
+        })
+
+        # Make sure the chat is at the front of the target's active DMs
+        already_active = db.user_settings.count_documents({
+            "_id": username,
+            "active_dms": dm["_id"]
+        }, limit=1) > 0
+        db.user_settings.update_one({"_id": username}, {
+            "$pull": {"active_dms": dm["_id"]}
+        })
+        db.user_settings.update_one({"_id": username}, {
+            "$push": {"active_dms": {
+                "$each": [dm["_id"]],
+                "$position": 0,
+                "$slice": -150
+            }}
+        })
+
+        # Notify both members; if the target didn't already have the DM in
+        # their list, send them the chat too
+        app.cl.send_event("update_chat", {
+            "_id": dm["_id"],
+            "block_notice": request.user
+        }, usernames=dm["members"])
+        if not already_active:
+            dm.update({
+                "emojis": list(db.chat_emojis.find({
+                    "chat_id": dm["_id"]
+                }, projection={"chat_id": 0, "created_at": 0, "created_by": 0})),
+                "stickers": list(db.chat_stickers.find({
+                    "chat_id": dm["_id"]
+                }, projection={"chat_id": 0, "created_at": 0, "created_by": 0}))
+            })
+            dm["block_notice"] = request.user
+            if dm.get("dm_request"):
+                dm["dm_request"] = security.public_dm_request(dm["dm_request"])
+            app.cl.send_event("create_chat", dm, usernames=[username])
 
     # Friend request/friendship notifications
     if data.state == 1:
