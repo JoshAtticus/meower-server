@@ -34,6 +34,7 @@ DEFAULT_USER_SETTINGS = {
     "debug": False,
     "hide_blocked_users": False,
     "hide_presence": False,
+    "profile_theme": False,
     "active_dms": [],
     "favorited_chats": []
 }

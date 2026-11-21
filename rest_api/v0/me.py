@@ -38,6 +38,7 @@ class UpdateConfigBody(BaseModel):
     debug: Optional[bool] = Field(default=None)
     hide_blocked_users: Optional[bool] = Field(default=None)
     hide_presence: Optional[bool] = Field(default=None)
+    profile_theme: Optional[bool] = Field(default=None)
     favorited_chats: Optional[List[str]] = Field(default=None)
 
     class Config:
