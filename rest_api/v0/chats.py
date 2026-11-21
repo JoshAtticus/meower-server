@@ -617,6 +617,11 @@ async def create_chat_invite(chat_id, data: InviteBody):
     # Send inbox message to user
     app.supporter.create_post("inbox", username, f"@{request.user} invited you to join the group chat '{chat['nickname']}'! You can accept or decline the invite from your invites page.")
 
+    # Notify chat members so pending invite lists update
+    app.cl.send_event("chat_invites_update", {
+        "chat_id": chat_id
+    }, usernames=chat["members"])
+
     invite["error"] = False
     return invite, 200
 
@@ -631,10 +636,6 @@ async def get_chat_invites(chat_id):
     chat = db.chats.find_one({"_id": chat_id, "members": request.user, "deleted": False})
     if not chat:
         abort(404)
-
-    # Only the owner can view pending invites
-    if chat["owner"] != request.user:
-        abort(403)
 
     # Clean up expired invites and return pending ones
     db.chat_invites.delete_many({"chat_id": chat_id, "expires": {"$lt": int(time.time())}})

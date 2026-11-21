@@ -102,6 +102,11 @@ async def accept_invite(invite_id):
     # Send in-chat notification
     app.supporter.create_post(invite["chat_id"], "Server", f"@{request.user} joined the group chat via an invite from @{invite['from']}.", chat_members=chat["members"])
 
+    # Notify members so pending invite lists update
+    app.cl.send_event("chat_invites_update", {
+        "chat_id": invite["chat_id"]
+    }, usernames=chat["members"])
+
     # Return chat
     chat["error"] = False
     return chat, 200
@@ -124,5 +129,12 @@ async def delete_invite(invite_id):
 
     # Delete invite
     db.chat_invites.delete_one({"_id": invite_id})
+
+    # Notify members so pending invite lists update
+    chat = db.chats.find_one({"_id": invite["chat_id"], "deleted": False}, projection={"members": 1})
+    if chat:
+        app.cl.send_event("chat_invites_update", {
+            "chat_id": invite["chat_id"]
+        }, usernames=chat["members"])
 
     return {"error": False}, 200
