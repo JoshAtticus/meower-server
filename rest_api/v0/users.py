@@ -143,6 +143,13 @@ async def update_relationship(username, data: UpdateRelationshipBody):
         if reciprocal:
             app.supporter.create_post("inbox", username, f"@{request.user} accepted your friend request!")
             app.supporter.create_post("inbox", request.user, f"You are now friends with @{username}!")
+            # Becoming friends auto-accepts any pending DM request between them
+            for dm in db.chats.find({"type": 1, "members": {"$all": [request.user, username]}, "dm_request": {"$exists": True}}, projection={"members": 1}):
+                db.chats.update_one({"_id": dm["_id"]}, {"$unset": {"dm_request": ""}})
+                app.cl.send_event("update_chat", {
+                    "_id": dm["_id"],
+                    "dm_request": None
+                }, usernames=dm["members"])
         else:
             app.supporter.create_post("inbox", username, f"@{request.user} sent you a friend request! Visit their profile to accept it.")
         app.cl.send_event("update_friends", {}, usernames=[request.user, username])
@@ -234,7 +241,7 @@ async def get_dm_chat(username):
         if security.is_restricted(request.user, security.Restrictions.NEW_CHATS):
             return {"error": True, "type": "accountBanned"}, 403
 
-        # Create chat
+        # Create chat (a DM request if the users aren't friends)
         chat = {
             "_id": str(uuid.uuid4()),
             "type": 1,
@@ -245,6 +252,11 @@ async def get_dm_chat(username):
             "last_active": 0,
             "deleted": False
         }
+        if not security.are_friends(request.user, username):
+            chat["dm_request"] = {
+                "from": request.user,
+                "first_message_sent": False
+            }
         db.chats.insert_one(chat)
 
     # Return chat

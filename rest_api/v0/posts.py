@@ -484,13 +484,14 @@ async def create_chat_post(chat_id, data: PostBody):
     if not data.content and not attachments and not data.stickers:
         abort(400)
 
+    dm_request_first_message = False
     if chat_id != "livechat":
         # Get chat
         chat = db.chats.find_one({
             "_id": chat_id,
             "members": request.user,
             "deleted": False
-        }, projection={"type": 1, "members": 1, "bans": 1})
+        }, projection={"type": 1, "members": 1, "bans": 1, "dm_request": 1})
         if not chat:
             abort(404)
 
@@ -501,6 +502,14 @@ async def create_chat_post(chat_id, data: PostBody):
 
         # DM stuff
         if chat["type"] == 1:
+            # Enforce pending DM requests: the requester gets one message,
+            # then must wait for the recipient to accept
+            dm_request = chat.get("dm_request")
+            if dm_request:
+                if request.user != dm_request["from"] or dm_request["first_message_sent"]:
+                    return {"error": True, "type": "dmRequestPending"}, 403
+                dm_request_first_message = True
+
             # Check privacy options
             if db.relationships.count_documents({"$or": [
                 {"_id": {"from": chat["members"][0], "to": chat["members"][1]}},
@@ -535,6 +544,17 @@ async def create_chat_post(chat_id, data: PostBody):
         chat_members=(None if chat_id == "livechat" else chat["members"]),
         reply_to=unique_reply_to_post_ids
     )
+
+    # Consume the requester's one allowed message on a pending DM request
+    if dm_request_first_message:
+        db.chats.update_one({"_id": chat_id}, {"$set": {"dm_request.first_message_sent": True}})
+        app.cl.send_event("update_chat", {
+            "_id": chat_id,
+            "dm_request": {
+                "from": request.user,
+                "first_message_sent": True
+            }
+        }, usernames=chat["members"])
 
     # Return new post
     post["error"] = False

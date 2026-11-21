@@ -261,6 +261,14 @@ def create_user_token(username: str, ip: str, used_token: Optional[str] = None) 
     return new_token
 
 
+def are_friends(user1: str, user2: str) -> bool:
+    """Return True if both users have a mutual friend relationship."""
+    return db.relationships.count_documents({"$or": [
+        {"_id": {"from": user1, "to": user2}},
+        {"_id": {"from": user2, "to": user1}}
+    ], "state": 1}, limit=2) == 2
+
+
 def chat_ban(chat: dict, username: str) -> Optional[dict]:
     """Return the user's active chat ban, or None."""
     for ban in chat.get("bans", []):

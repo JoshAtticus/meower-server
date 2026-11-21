@@ -647,6 +647,63 @@ async def get_chat_invites(chat_id):
     }, 200
 
 
+@chats_bp.post("/<chat_id>/dm_request/accept")
+async def accept_dm_request(chat_id):
+    # Check authorization
+    if not request.user:
+        abort(401)
+
+    # Get chat with a pending DM request
+    chat = db.chats.find_one({"_id": chat_id, "type": 1, "members": request.user, "deleted": False})
+    if not chat or not chat.get("dm_request"):
+        abort(404)
+
+    # Only the recipient can accept
+    if chat["dm_request"]["from"] == request.user:
+        abort(403)
+
+    # Accept the request
+    db.chats.update_one({"_id": chat_id}, {"$unset": {"dm_request": ""}})
+    del chat["dm_request"]
+
+    # Notify members and post a notice in the DM
+    app.cl.send_event("update_chat", {
+        "_id": chat_id,
+        "dm_request": None
+    }, usernames=chat["members"])
+    app.supporter.create_post(chat_id, "Server", f"@{request.user} accepted the DM request.", chat_members=chat["members"])
+
+    chat["error"] = False
+    return chat, 200
+
+
+@chats_bp.delete("/<chat_id>/dm_request")
+async def decline_dm_request(chat_id):
+    # Check authorization
+    if not request.user:
+        abort(401)
+
+    # Get chat with a pending DM request
+    chat = db.chats.find_one({"_id": chat_id, "type": 1, "members": request.user, "deleted": False})
+    if not chat or not chat.get("dm_request"):
+        abort(404)
+
+    # Only the recipient can decline
+    if chat["dm_request"]["from"] == request.user:
+        abort(403)
+
+    # Decline: delete the chat for everyone
+    db.chats.update_one({"_id": chat_id}, {"$set": {"deleted": True}})
+    for member in chat["members"]:
+        app.cl.send_event("delete_chat", {"chat_id": chat_id}, usernames=[member])
+
+    # Let the requester know
+    if chat["dm_request"]["from"] != request.user:
+        app.supporter.create_post("inbox", chat["dm_request"]["from"], f"@{request.user} declined your DM request.")
+
+    return {"error": False}, 200
+
+
 @chats_bp.put("/<chat_id>/bans/<username>")
 @validate_request(BanBody)
 async def ban_chat_member(chat_id, username, data: BanBody):
