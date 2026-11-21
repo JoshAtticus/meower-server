@@ -139,8 +139,11 @@ class CloudlinkServer:
                         extra_args["name"] = packet.get("name")
                     
                     await cmd_func(cl_client, packet["val"], packet.get("listener"), **extra_args)
-                except:
+                except Exception as e:
                     print(full_stack())
+                    if os.getenv("SENTRY_DSN"):
+                        import sentry_sdk
+                        sentry_sdk.capture_exception(e)
                     cl_client.send_statuscode("InternalServerError", packet.get("listener"))
         except: pass
         finally:

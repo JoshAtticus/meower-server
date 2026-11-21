@@ -15,6 +15,17 @@ from rest_api import app as rest_api
 
 
 if __name__ == "__main__":
+    # Initialise Sentry, if configured
+    if os.getenv("SENTRY_DSN"):
+        import sentry_sdk
+        from sentry_sdk.integrations.quart import QuartIntegration
+        sentry_sdk.init(
+            dsn=os.getenv("SENTRY_DSN"),
+            integrations=[QuartIntegration()],
+            environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
+            traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", 0)),
+        )
+
     # Create Cloudlink server
     cl = CloudlinkServer()
 
