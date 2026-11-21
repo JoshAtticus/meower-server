@@ -32,11 +32,24 @@ class RoleBody(BaseModel):
     name: str = Field(min_length=1, max_length=32)
     tier: int = Field(ge=0, le=3)
     permissions: dict[str, bool] = Field(default_factory=dict)
+    colors: Optional[list[str]] = Field(default=None)
 
 class RolePatchBody(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=32)
     tier: Optional[int] = Field(default=None)
     permissions: Optional[dict[str, Optional[bool]]] = Field(default=None)
+    colors: Optional[list[str]] = Field(default=None)
+
+
+ROLE_COLOR_RE = re.compile(r"^[0-9a-fA-F]{6}$")
+
+def clean_role_colors(colors):
+    """0 colours = none, 1 = solid, 2 = gradient. Returns None if invalid."""
+    if colors is None:
+        return []
+    if len(colors) > 2 or not all(ROLE_COLOR_RE.match(c) for c in colors):
+        return None
+    return [c.lower() for c in colors]
 
 class EmoteBody(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_\-]+$")
@@ -1307,12 +1320,18 @@ async def create_chat_role(chat_id, data: RoleBody):
             data.tier >= chat_permissions.rank(chat, request.user):
         return insufficient_rank()
 
+    # Validate colours
+    colors = clean_role_colors(data.colors)
+    if colors is None:
+        return {"error": True, "type": "badColors"}, 400
+
     # Validate permissions
     role = {
         "_id": chat_permissions.new_role_id(),
         "name": data.name,
         "tier": data.tier,
         "permissions": {},
+        "colors": colors,
         "preset": False
     }
     for perm, val in data.permissions.items():
@@ -1350,8 +1369,19 @@ async def update_chat_role(chat_id, role_id, data: RolePatchBody):
     if not role:
         abort(404)
 
-    # Check modify_roles permission (the administrator role can never be edited)
-    if not chat_permissions.has(chat, request.user, "modify_roles") or \
+    # Validate colours
+    colors = None
+    if data.colors is not None:
+        colors = clean_role_colors(data.colors)
+        if colors is None:
+            return {"error": True, "type": "badColors"}, 400
+
+    # Check modify_roles permission. The administrator role can't be edited,
+    # except that the owner may change its (purely cosmetic) colours.
+    if role["_id"] == "administrator":
+        if request.user != chat["owner"] or data.name is not None or data.permissions or colors is None:
+            return missing_permission()
+    elif not chat_permissions.has(chat, request.user, "modify_roles") or \
             not chat_permissions.can_manage_role(chat, request.user, role):
         return missing_permission()
 
@@ -1375,6 +1405,8 @@ async def update_chat_role(chat_id, role_id, data: RolePatchBody):
     # Update role
     if data.name is not None:
         role["name"] = data.name
+    if colors is not None:
+        role["colors"] = colors
     role["permissions"] = new_permissions
     db.chats.update_one({"_id": chat_id}, {"$set": {"roles": chat["roles"]}})
 
