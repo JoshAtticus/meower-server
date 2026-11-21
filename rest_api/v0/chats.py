@@ -151,6 +151,11 @@ async def get_chat(chat_id):
     if not chat:
         abort(404)
 
+    # Normalize any expired DM request and only expose the public shape
+    chat = security.normalize_dm_request(chat)
+    if "dm_request" in chat:
+        chat["dm_request"] = security.public_dm_request(chat["dm_request"])
+
     # Return chat
     chat.update({
         "error": False,
@@ -373,7 +378,7 @@ def send_chat_invite(chat: dict, username: str, expires_in: Optional[int] = None
     }, usernames=[username])
 
     # Send inbox message to user
-    app.supporter.create_post("inbox", username, f"@{request.user} invited you to join the group chat '{chat['nickname']}'! You can accept or decline the invite from your invites page.")
+    app.supporter.create_post("inbox", username, f"@{request.user} invited you to join the group chat '{chat['nickname']}'! You can accept or decline the invite from your chats page.")
 
     # Notify chat members so pending invite lists update
     app.cl.send_event("chat_invites_update", {
@@ -688,11 +693,14 @@ async def accept_dm_request(chat_id):
 
     # Get chat with a pending DM request
     chat = db.chats.find_one({"_id": chat_id, "type": 1, "members": request.user, "deleted": False})
-    if not chat or not chat.get("dm_request"):
+    if not chat:
+        abort(404)
+    chat = security.normalize_dm_request(chat)
+    if not chat.get("dm_request") or not chat["dm_request"].get("from"):
         abort(404)
 
     # Only the recipient can accept
-    if chat["dm_request"]["from"] == request.user:
+    if chat["dm_request"]["to"] != request.user:
         abort(403)
 
     # Accept the request
@@ -710,29 +718,31 @@ async def accept_dm_request(chat_id):
     return chat, 200
 
 
-@chats_bp.delete("/<chat_id>/dm_request")
-async def decline_dm_request(chat_id):
+@chats_bp.post("/<chat_id>/dm_request/ignore")
+async def ignore_dm_request(chat_id):
     # Check authorization
     if not request.user:
         abort(401)
 
     # Get chat with a pending DM request
     chat = db.chats.find_one({"_id": chat_id, "type": 1, "members": request.user, "deleted": False})
-    if not chat or not chat.get("dm_request"):
+    if not chat:
+        abort(404)
+    chat = security.normalize_dm_request(chat)
+    if not chat.get("dm_request") or not chat["dm_request"].get("from"):
         abort(404)
 
-    # Only the recipient can decline
-    if chat["dm_request"]["from"] == request.user:
+    # Only the recipient can ignore
+    if chat["dm_request"]["to"] != request.user:
         abort(403)
 
-    # Decline: delete the chat for everyone
-    db.chats.update_one({"_id": chat_id}, {"$set": {"deleted": True}})
-    for member in chat["members"]:
-        app.cl.send_event("delete_chat", {"chat_id": chat_id}, usernames=[member])
-
-    # Let the requester know
-    if chat["dm_request"]["from"] != request.user:
-        app.supporter.create_post("inbox", chat["dm_request"]["from"], f"@{request.user} declined your DM request.")
+    # Ignore: flag the request and remove the chat from the recipient's
+    # active DMs. Nothing is sent to the requester.
+    db.chats.update_one({"_id": chat_id}, {"$set": {"dm_request.ignored": True}})
+    db.user_settings.update_one({"_id": request.user}, {
+        "$pull": {"active_dms": chat_id}
+    })
+    app.cl.send_event("delete_chat", {"chat_id": chat_id}, usernames=[request.user])
 
     return {"error": False}, 200
 

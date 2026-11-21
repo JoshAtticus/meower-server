@@ -181,6 +181,12 @@ async def update_post(query_args: PostIdQueryArgs, data: PostBody):
     elif post["post_origin"] != "home" and security.is_restricted(request.user, security.Restrictions.CHAT_POSTS):
         return {"error": True, "type": "accountBanned"}, 403
 
+    # Can't edit the message that makes up a pending DM request
+    if post["post_origin"] not in ["home", "inbox"] and chat["type"] == 1:
+        dm_request = chat.get("dm_request")
+        if dm_request and dm_request.get("from") == post["u"]:
+            return {"error": True, "type": "dmRequestPending"}, 403
+
     # Make sure new content isn't the same as the old content
     if post["p"] == data.content:
         post["error"] = False
@@ -588,7 +594,7 @@ async def create_chat_post(chat_id, data: PostBody):
     if not data.content and not attachments and not data.stickers:
         abort(400)
 
-    dm_request_first_message = False
+    dm_request_update = None  # dict to set, or "unset" when the recipient replies
     if chat_id != "livechat":
         # Get chat
         chat = db.chats.find_one({
@@ -606,13 +612,29 @@ async def create_chat_post(chat_id, data: PostBody):
 
         # DM stuff
         if chat["type"] == 1:
-            # Enforce pending DM requests: the requester gets one message,
-            # then must wait for the recipient to accept
+            # Enforce pending DM requests: the requester gets one text-only
+            # message, then must wait for the recipient to accept. This is
+            # checked before the blocked-privacy check so a blocked sender
+            # can't tell the difference.
+            chat = security.normalize_dm_request(chat)
             dm_request = chat.get("dm_request")
             if dm_request:
-                if request.user != dm_request["from"] or dm_request["first_message_sent"]:
+                if dm_request["from"] is None:
+                    # Whoever posts first becomes the requester
+                    if attachments or data.stickers:
+                        return {"error": True, "type": "dmRequestTextOnly"}, 403
+                    dm_request_update = {
+                        "from": request.user,
+                        "to": next(member for member in chat["members"] if member != request.user),
+                        "created": int(time.time()),
+                        "first_message_sent": True,
+                        "ignored": False
+                    }
+                elif dm_request["from"] == request.user:
                     return {"error": True, "type": "dmRequestPending"}, 403
-                dm_request_first_message = True
+                else:
+                    # The recipient replying accepts the request
+                    dm_request_update = "unset"
 
             # Check privacy options
             if db.relationships.count_documents({"$or": [
@@ -649,15 +671,18 @@ async def create_chat_post(chat_id, data: PostBody):
         reply_to=unique_reply_to_post_ids
     )
 
-    # Consume the requester's one allowed message on a pending DM request
-    if dm_request_first_message:
-        db.chats.update_one({"_id": chat_id}, {"$set": {"dm_request.first_message_sent": True}})
+    # Apply any DM request change and tell both members (public shape only)
+    if dm_request_update == "unset":
+        db.chats.update_one({"_id": chat_id}, {"$unset": {"dm_request": ""}})
         app.cl.send_event("update_chat", {
             "_id": chat_id,
-            "dm_request": {
-                "from": request.user,
-                "first_message_sent": True
-            }
+            "dm_request": None
+        }, usernames=chat["members"])
+    elif dm_request_update:
+        db.chats.update_one({"_id": chat_id}, {"$set": {"dm_request": dm_request_update}})
+        app.cl.send_event("update_chat", {
+            "_id": chat_id,
+            "dm_request": security.public_dm_request(dm_request_update)
         }, usernames=chat["members"])
 
     # Return new post

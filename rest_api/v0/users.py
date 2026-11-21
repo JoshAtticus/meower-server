@@ -130,12 +130,27 @@ async def update_relationship(username, data: UpdateRelationshipBody):
         return relationship, 200
 
     # Update relationship
+    was_blocked = relationship["state"] == 2
     relationship["state"] = data.state
     relationship["updated_at"] = int(time.time())
     if data.state == 0:
         db.relationships.delete_one({"_id": {"from": request.user, "to": username}})
     else:
         db.relationships.update_one({"_id": {"from": request.user, "to": username}}, {"$set": relationship}, upsert=True)
+
+    # Unblocking someone restarts the expiry countdown on any DM request
+    # they sent the requester
+    if was_blocked:
+        for dm in db.chats.find({
+            "type": 1,
+            "members": {"$all": [request.user, username]},
+            "dm_request.from": username,
+            "dm_request.to": request.user,
+            "dm_request.first_message_sent": True
+        }, projection={"_id": 1}):
+            db.chats.update_one({"_id": dm["_id"]}, {
+                "$set": {"dm_request.created": int(time.time())}
+            })
 
     # Friend request/friendship notifications
     if data.state == 1:
@@ -151,7 +166,7 @@ async def update_relationship(username, data: UpdateRelationshipBody):
                     "dm_request": None
                 }, usernames=dm["members"])
         else:
-            app.supporter.create_post("inbox", username, f"@{request.user} sent you a friend request! Visit their profile to accept it.")
+            app.supporter.create_post("inbox", username, f"@{request.user} sent you a friend request! Head to the friends page to accept it.")
         app.cl.send_event("update_friends", {}, usernames=[request.user, username])
     elif data.state == 0:
         app.cl.send_event("update_friends", {}, usernames=[request.user, username])
@@ -254,10 +269,37 @@ async def get_dm_chat(username):
         }
         if not security.are_friends(request.user, username):
             chat["dm_request"] = {
-                "from": request.user,
-                "first_message_sent": False
+                "from": None,
+                "to": None,
+                "created": 0,
+                "first_message_sent": False,
+                "ignored": False
             }
         db.chats.insert_one(chat)
+    else:
+        chat = security.normalize_dm_request(chat)
+
+        # Reopening a DM the requester doesn't have in their active DMs (they
+        # deleted it or never had it) requires a new request between non-friends
+        if "dm_request" not in chat and not security.are_friends(request.user, username):
+            if not db.user_settings.count_documents({
+                "_id": request.user,
+                "active_dms": chat["_id"]
+            }, limit=1):
+                chat["dm_request"] = {
+                    "from": None,
+                    "to": None,
+                    "created": 0,
+                    "first_message_sent": False,
+                    "ignored": False
+                }
+                db.chats.update_one({"_id": chat["_id"]}, {
+                    "$set": {"dm_request": chat["dm_request"]}
+                })
+
+    # Never expose the internal dm_request fields to clients
+    if "dm_request" in chat:
+        chat["dm_request"] = security.public_dm_request(chat["dm_request"])
 
     # Return chat
     if chat["last_active"] == 0:

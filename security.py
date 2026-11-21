@@ -279,6 +279,49 @@ def chat_ban(chat: dict, username: str) -> Optional[dict]:
     return None
 
 
+DM_REQUEST_TTL = 72 * 60 * 60
+
+def normalize_dm_request(chat: dict) -> dict:
+    """Reset an expired DM request on the chat (in the DB and in-place).
+
+    A pending DM request expires DM_REQUEST_TTL seconds after the requester's
+    first message, unless the recipient has blocked the sender - blocked
+    requests never expire.
+    """
+    dm_request = chat.get("dm_request")
+    if dm_request and dm_request.get("from") and dm_request.get("first_message_sent") \
+            and time.time() - dm_request.get("created", 0) > DM_REQUEST_TTL \
+            and not db.relationships.count_documents({
+                "_id": {"from": dm_request.get("to"), "to": dm_request["from"]},
+                "state": 2
+            }, limit=1):
+        dm_request = {
+            "from": None,
+            "to": None,
+            "created": 0,
+            "first_message_sent": False,
+            "ignored": False
+        }
+        db.chats.update_one({"_id": chat["_id"]}, {"$set": {"dm_request": dm_request}})
+        chat["dm_request"] = dm_request
+    return chat
+
+
+def public_dm_request(dm_request: Optional[dict]) -> Optional[dict]:
+    """Return the client-safe shape of a DM request.
+
+    `ignored` and `created` are never exposed - the sender must not be able to
+    detect being ignored/blocked or infer it from timing.
+    """
+    if not dm_request:
+        return None
+    return {
+        "from": dm_request.get("from"),
+        "to": dm_request.get("to"),
+        "first_message_sent": dm_request.get("first_message_sent", False)
+    }
+
+
 def update_settings(username, newdata):
     # Check datatype
     if not isinstance(username, str):

@@ -4,6 +4,7 @@ import uuid, time, msgpack, pymongo, re, copy, secrets
 
 from cloudlink import CloudlinkServer
 from database import db, rdb
+import security
 
 """
 Meower Supporter Module
@@ -59,7 +60,7 @@ class Supporter:
             user_settings["favorited_chats"] = []
 
         # Get and return chats
-        return list(db.chats.find({"$or": [
+        chats = list(db.chats.find({"$or": [
             {  # DMs
                 "_id": {
                     "$in": user_settings["active_dms"] + user_settings["favorited_chats"]
@@ -73,6 +74,11 @@ class Supporter:
                 "deleted": False
             }
         ]}))
+        for chat in chats:
+            if chat.get("dm_request"):
+                chat = security.normalize_dm_request(chat)
+                chat["dm_request"] = security.public_dm_request(chat["dm_request"])
+        return chats
 
     def create_post(
         self,
