@@ -309,6 +309,8 @@ async def pin_post(post_id):
     if not (request.user == chat["owner"] or chat["allow_pinning"] or has_perm):
         abort(401)
 
+    was_pinned = post.get("pinned", False)
+
     db.posts.update_one({"_id": post_id}, {"$set": {
         "pinned": True
     }})
@@ -316,6 +318,10 @@ async def pin_post(post_id):
     post["pinned"] = True
 
     app.cl.send_event("update_post", post, usernames=(None if post["post_origin"] == "home" else chat["members"]))
+
+    # Announce the change in the chat
+    if was_pinned != True:
+        app.supporter.create_post(chat["_id"], "Server", f"@{request.user} pinned a post from @{post['u']}.", chat_members=chat["members"])
 
     post["error"] = False
     return app.supporter.parse_posts_v0([post], requester=request.user)[0], 200
@@ -344,6 +350,8 @@ async def unpin_post(post_id):
         abort(401)
 
 
+    was_pinned = post.get("pinned", False)
+
     db.posts.update_one({"_id": post_id}, {"$set": {
         "pinned": False
     }})
@@ -351,6 +359,10 @@ async def unpin_post(post_id):
     post["pinned"] = False
 
     app.cl.send_event("update_post", post, usernames=(None if post["post_origin"] == "home" else chat["members"]))
+
+    # Announce the change in the chat
+    if was_pinned != False:
+        app.supporter.create_post(chat["_id"], "Server", f"@{request.user} unpinned a post from @{post['u']}.", chat_members=chat["members"])
 
     post["error"] = False
     return app.supporter.parse_posts_v0([post], requester=request.user)[0], 200
@@ -492,7 +504,7 @@ async def get_chat_posts(chat_id, query_args: PagedQueryArgs):
         "error": False,
         "autoget": app.supporter.parse_posts_v0(db.posts.find(
             query,
-            sort=[("t.e", pymongo.DESCENDING)],
+            sort=[("t.e", pymongo.DESCENDING), ("_id", pymongo.DESCENDING)],
             skip=(query_args.page-1)*25,
             limit=25
         ), requester=request.user),

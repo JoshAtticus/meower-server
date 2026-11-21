@@ -38,7 +38,7 @@ async def get_home_posts(query_args: GetHomeQueryArgs):
         "error": False,
         "autoget": app.supporter.parse_posts_v0(db.posts.find(
             query,
-            sort=[("t.e", pymongo.DESCENDING)],
+            sort=[("t.e", pymongo.DESCENDING), ("_id", pymongo.DESCENDING)],
             skip=(query_args.page-1)*25,
             limit=25
         ), requester=request.user),

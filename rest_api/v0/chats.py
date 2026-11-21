@@ -884,7 +884,7 @@ def get_chat_pins(chat_id, query_args: GetPostsQueryArgs):
         "autoget": app.supporter.parse_posts_v0(
             db.posts.find(
                 query,
-                sort=[("t.e", pymongo.DESCENDING)],
+                sort=[("t.e", pymongo.DESCENDING), ("_id", pymongo.DESCENDING)],
                 skip=(query_args.page-1)*25,
                 limit=25
             ),

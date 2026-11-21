@@ -771,7 +771,7 @@ async def get_user_posts(username, query_args: GetUserPostsQueryArgs):
     else:
         query = {"u": username, "post_origin": {"$in": ["home", "inbox"]}}
     posts = db.posts.find(
-        query, sort=[("t.e", pymongo.DESCENDING)], skip=(query_args.page - 1) * 25, limit=25
+        query, sort=[("t.e", pymongo.DESCENDING), ("_id", pymongo.DESCENDING)], skip=(query_args.page - 1) * 25, limit=25
     )
 
     # Add log
@@ -1159,7 +1159,7 @@ async def get_chat_posts(chat_id, query_args: GetChatPostsQueryArgs):
     # Get posts
     query = {"post_origin": chat_id, "$or": [{"isDeleted": False}, {"isDeleted": True}]}
     posts = db.posts.find(
-        query, sort=[("t.e", pymongo.DESCENDING)], skip=(query_args.page - 1) * 25, limit=25
+        query, sort=[("t.e", pymongo.DESCENDING), ("_id", pymongo.DESCENDING)], skip=(query_args.page - 1) * 25, limit=25
     )
 
     # Return posts
@@ -1353,7 +1353,7 @@ async def get_announcements(query_args: GetAnnouncementsQueryArgs):
         "u": "Server",
     }
     posts = db.posts.find(
-        query, sort=[("t.e", pymongo.DESCENDING)], skip=(query_args.page - 1) * 25, limit=25
+        query, sort=[("t.e", pymongo.DESCENDING), ("_id", pymongo.DESCENDING)], skip=(query_args.page - 1) * 25, limit=25
     )
 
     # Add log
