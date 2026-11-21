@@ -18,6 +18,9 @@ posts_bp = Blueprint("posts_bp", __name__, url_prefix="/posts")
 class PostIdQueryArgs(BaseModel):
     id: str = Field()
 
+class ContextQueryArgs(BaseModel):
+    limit: Optional[int] = Field(default=5, ge=1, le=10)
+
 class PagedQueryArgs(BaseModel):
     page: Optional[int] = Field(default=1, ge=1)
 
@@ -63,6 +66,49 @@ async def get_post(query_args: PostIdQueryArgs):
     # Return post
     post["error"] = False
     return app.supporter.parse_posts_v0([post], requester=request.user)[0], 200
+
+
+@posts_bp.get("/<post_id>/context")
+@validate_querystring(ContextQueryArgs)
+async def get_post_context(post_id, query_args: ContextQueryArgs):
+    # Get post
+    post = db.posts.find_one({"_id": post_id, "isDeleted": False})
+    if not post:
+        abort(404)
+
+    # Check access
+    if (post["post_origin"] == "inbox") and (post["u"] not in ["Server", request.user]):
+        abort(404)
+    elif post["post_origin"] not in ["home", "inbox"]:
+        if not db.chats.count_documents({
+            "_id": post["post_origin"],
+            "members": request.user,
+            "deleted": False
+        }, limit=1):
+            abort(404)
+
+    # Get surrounding posts (ULIDs sort by creation time)
+    base_query = {
+        "post_origin": post["post_origin"],
+        "isDeleted": False
+    }
+    before = list(db.posts.find(
+        {**base_query, "_id": {"$gt": post_id}},
+        sort=[("_id", pymongo.ASCENDING)],
+        limit=query_args.limit
+    ))
+    after = list(db.posts.find(
+        {**base_query, "_id": {"$lt": post_id}},
+        sort=[("_id", pymongo.DESCENDING)],
+        limit=query_args.limit
+    ))
+
+    return {
+        "error": False,
+        "post": app.supporter.parse_posts_v0([post], requester=request.user)[0],
+        "before": app.supporter.parse_posts_v0(before, requester=request.user),
+        "after": app.supporter.parse_posts_v0(after, requester=request.user)
+    }, 200
 
 
 @posts_bp.patch("/")
