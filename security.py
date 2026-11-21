@@ -13,6 +13,7 @@ This module provides account management and authentication services.
 
 SENSITIVE_ACCOUNT_FIELDS = {
     "pswd",
+    "prev_pswd",
     "mfa_recovery_code",
     "tokens",
     "delete_after"
