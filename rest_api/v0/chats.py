@@ -26,7 +26,7 @@ class ChatBody(BaseModel):
         str_strip_whitespace = True
 
 class EmoteBody(BaseModel):
-    name: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_\-]+$")
 
 class InviteBody(BaseModel):
     username: str = Field(min_length=1, max_length=20)
@@ -965,6 +965,10 @@ async def create_chat_emote(chat_id: str, emote_type: Literal["emojis", "sticker
         if db.chat_stickers.count_documents({"chat_id": chat_id}, limit=50) >= int(os.getenv("CHAT_STICKERS_LIMIT", 50)):
             return {"error": True, "type": "tooManyStickers"}, 403
 
+    # Make sure a name is specified
+    if not data.name:
+        return {"error": True, "type": "nameRequired"}, 400
+
     # Claim file
     try:
         claim_file(emote_id, emote_type, request.user)
@@ -974,10 +978,6 @@ async def create_chat_emote(chat_id: str, emote_type: Literal["emojis", "sticker
     else:
         file = db.files.find_one({"_id": emote_id})
 
-    # Fall back to filename if no name is specified
-    if not data.name:
-        name_pattern = re.compile(r'[^A-Za-z0-9\-\_]')
-        data.name = name_pattern.sub("_", file["filename"])[:20]
 
     # Create emote
     emote = {
