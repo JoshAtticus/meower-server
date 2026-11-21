@@ -490,10 +490,15 @@ async def create_chat_post(chat_id, data: PostBody):
             "_id": chat_id,
             "members": request.user,
             "deleted": False
-        }, projection={"type": 1, "members": 1})
+        }, projection={"type": 1, "members": 1, "bans": 1})
         if not chat:
             abort(404)
-        
+
+        # Make sure the user isn't banned from the chat
+        ban = security.chat_ban(chat, request.user)
+        if ban:
+            return {"error": True, "type": "chatBanned", "expires": ban["expires"]}, 403
+
         # DM stuff
         if chat["type"] == 1:
             # Check privacy options

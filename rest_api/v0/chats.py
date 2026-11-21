@@ -28,6 +28,13 @@ class ChatBody(BaseModel):
 class EmoteBody(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=32)
 
+class InviteBody(BaseModel):
+    username: str = Field(min_length=1, max_length=20)
+    expires_in: Optional[int] = Field(default=None, ge=60, le=2592000)
+
+class BanBody(BaseModel):
+    expires_in: Optional[int] = Field(default=None, ge=60, le=2592000)
+
 
 @chats_bp.get("/")
 async def get_chats():
@@ -105,7 +112,8 @@ async def create_chat(data: ChatBody):
         "created": int(time.time()),
         "last_active": int(time.time()),
         "deleted": False,
-        "allow_pinning": data.allow_pinning
+        "allow_pinning": data.allow_pinning,
+        "bans": []
     }
     db.chats.insert_one(chat)
 
@@ -361,6 +369,10 @@ async def add_chat_member(chat_id, username):
     if (not user) or (user["permissions"] is None):
         abort(404)
 
+    # Make sure requested user isn't banned from the chat
+    if security.chat_ban(chat, username):
+        return {"error": True, "type": "chatBanned"}, 403
+
     # Make sure requested user isn't blocked or is blocking client
     if db.relationships.count_documents({"$or": [
         {
@@ -519,6 +531,242 @@ async def transfer_chat_ownership(chat_id, username):
         }, projection={"chat_id": 0, "created_at": 0, "created_by": 0}))
     })
     return chat, 200
+
+
+@chats_bp.post("/<chat_id>/invites")
+@validate_request(InviteBody)
+async def create_chat_invite(chat_id, data: InviteBody):
+    # Check authorization
+    if not request.user:
+        abort(401)
+
+    # Check ratelimit
+    if security.ratelimited(f"update_chat:{request.user}"):
+        abort(429)
+
+    # Ratelimit
+    security.ratelimit(f"update_chat:{request.user}", 10, 5)
+
+    # Check restrictions
+    if security.is_restricted(request.user, security.Restrictions.NEW_CHATS):
+        return {"error": True, "type": "accountBanned"}, 403
+
+    # Get chat
+    chat = db.chats.find_one({"_id": chat_id, "members": request.user, "deleted": False})
+    if not chat:
+        abort(404)
+
+    # Group chats only
+    if chat["type"] != 0:
+        abort(400)
+
+    username = data.username
+
+    # Make sure the chat isn't full
+    if len(chat["members"]) >= 256:
+        return {"error": True, "type": "chatFull"}, 403
+
+    # Make sure the user isn't already in the chat
+    if username in chat["members"]:
+        return {"error": True, "type": "chatMemberAlreadyExists"}, 409
+
+    # Make sure requested user exists and isn't deleted
+    user = db.usersv0.find_one({"_id": username}, projection={"permissions": 1})
+    if (not user) or (user["permissions"] is None):
+        abort(404)
+
+    # Make sure requested user isn't banned from the chat
+    if security.chat_ban(chat, username):
+        return {"error": True, "type": "chatBanned"}, 403
+
+    # Make sure requested user isn't blocked or is blocking client
+    if db.relationships.count_documents({"$or": [
+        {
+            "_id": {"from": request.user, "to": username},
+            "state": 2
+        },
+        {
+            "_id": {"from": username, "to": request.user},
+            "state": 2
+        }
+    ]}, limit=1) > 0:
+        abort(403)
+
+    # Clean up expired invites and make sure there's no pending invite already
+    db.chat_invites.delete_many({"chat_id": chat_id, "expires": {"$lt": int(time.time())}})
+    if db.chat_invites.count_documents({"chat_id": chat_id, "to": username}, limit=1):
+        return {"error": True, "type": "inviteAlreadyExists"}, 409
+
+    # Create invite
+    invite = {
+        "_id": str(uuid.uuid4()),
+        "chat_id": chat_id,
+        "from": request.user,
+        "to": username,
+        "created": int(time.time()),
+        "expires": (int(time.time()) + data.expires_in) if data.expires_in else None
+    }
+    db.chat_invites.insert_one(invite)
+
+    # Send invite event to the invitee
+    app.cl.send_event("chat_invite", {
+        **invite,
+        "chat_nickname": chat["nickname"]
+    }, usernames=[username])
+
+    # Send inbox message to user
+    app.supporter.create_post("inbox", username, f"@{request.user} invited you to join the group chat '{chat['nickname']}'! You can accept or decline the invite from your invites page.")
+
+    invite["error"] = False
+    return invite, 200
+
+
+@chats_bp.get("/<chat_id>/invites")
+async def get_chat_invites(chat_id):
+    # Check authorization
+    if not request.user:
+        abort(401)
+
+    # Get chat
+    chat = db.chats.find_one({"_id": chat_id, "members": request.user, "deleted": False})
+    if not chat:
+        abort(404)
+
+    # Only the owner can view pending invites
+    if chat["owner"] != request.user:
+        abort(403)
+
+    # Clean up expired invites and return pending ones
+    db.chat_invites.delete_many({"chat_id": chat_id, "expires": {"$lt": int(time.time())}})
+    return {
+        "error": False,
+        "autoget": list(db.chat_invites.find({"chat_id": chat_id})),
+        "page#": 1,
+        "pages": 1
+    }, 200
+
+
+@chats_bp.put("/<chat_id>/bans/<username>")
+@validate_request(BanBody)
+async def ban_chat_member(chat_id, username, data: BanBody):
+    # Check authorization
+    if not request.user:
+        abort(401)
+
+    # Check ratelimit
+    if security.ratelimited(f"update_chat:{request.user}"):
+        abort(429)
+
+    # Ratelimit
+    security.ratelimit(f"update_chat:{request.user}", 5, 5)
+
+    # Get chat
+    chat = db.chats.find_one({"_id": chat_id, "members": request.user, "deleted": False})
+    if not chat:
+        abort(404)
+
+    # Make sure requester is owner
+    if chat["owner"] != request.user:
+        abort(403)
+
+    # Make sure the target is a member and isn't the owner
+    if username not in chat["members"] or username == chat["owner"]:
+        abort(400)
+
+    # Replace any existing ban for the user
+    ban = {
+        "username": username,
+        "banned_by": request.user,
+        "banned_at": int(time.time()),
+        "expires": (int(time.time()) + data.expires_in) if data.expires_in else None
+    }
+    db.chats.update_one({"_id": chat_id}, {"$pull": {"bans": {"username": username}}})
+    db.chats.update_one({"_id": chat_id}, {"$push": {"bans": ban}})
+    chat["bans"] = [b for b in chat.get("bans", []) if b["username"] != username] + [ban]
+
+    # Revoke any pending invites for the user
+    db.chat_invites.delete_many({"chat_id": chat_id, "to": username})
+
+    # Send update chat event
+    app.cl.send_event("update_chat", {
+        "_id": chat_id,
+        "bans": chat["bans"]
+    }, usernames=chat["members"])
+
+    # Send inbox message to user
+    app.supporter.create_post("inbox", username, f"You have been banned from the group chat '{chat['nickname']}' by @{request.user}." + (f" The ban expires <t:{ban['expires']}:R>." if ban["expires"] else ""))
+
+    # Send in-chat notification
+    app.supporter.create_post(chat_id, "Server", f"@{request.user} banned @{username} from the group chat.", chat_members=chat["members"])
+
+    return {"error": False, "ban": ban}, 200
+
+
+@chats_bp.get("/<chat_id>/bans")
+async def get_chat_bans(chat_id):
+    # Check authorization
+    if not request.user:
+        abort(401)
+
+    # Get chat
+    chat = db.chats.find_one({"_id": chat_id, "members": request.user, "deleted": False})
+    if not chat:
+        abort(404)
+
+    # Only the owner can view bans
+    if chat["owner"] != request.user:
+        abort(403)
+
+    return {
+        "error": False,
+        "autoget": [
+            ban for ban in chat.get("bans", [])
+            if ban["expires"] is None or ban["expires"] > time.time()
+        ],
+        "page#": 1,
+        "pages": 1
+    }, 200
+
+
+@chats_bp.delete("/<chat_id>/bans/<username>")
+async def unban_chat_member(chat_id, username):
+    # Check authorization
+    if not request.user:
+        abort(401)
+
+    # Check ratelimit
+    if security.ratelimited(f"update_chat:{request.user}"):
+        abort(429)
+
+    # Ratelimit
+    security.ratelimit(f"update_chat:{request.user}", 5, 5)
+
+    # Get chat
+    chat = db.chats.find_one({"_id": chat_id, "members": request.user, "deleted": False})
+    if not chat:
+        abort(404)
+
+    # Make sure requester is owner
+    if chat["owner"] != request.user:
+        abort(403)
+
+    # Remove the ban
+    db.chats.update_one({"_id": chat_id}, {"$pull": {"bans": {"username": username}}})
+    chat["bans"] = [b for b in chat.get("bans", []) if b["username"] != username]
+
+    # Send update chat event
+    app.cl.send_event("update_chat", {
+        "_id": chat_id,
+        "bans": chat["bans"]
+    }, usernames=chat["members"])
+
+    # Send inbox message to user
+    app.supporter.create_post("inbox", username, f"You have been unbanned from the group chat '{chat['nickname']}'.")
+
+    # Send in-chat notification
+    app.supporter.create_post(chat_id, "Server", f"@{request.user} unbanned @{username} from the group chat.", chat_members=chat["members"])
+
+    return {"error": False}, 200
 
 
 @chats_bp.get("/<chat_id>/pins")

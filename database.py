@@ -150,6 +150,14 @@ try:
     ], name="chat_id")
 except: pass
 
+# Create chat_invites indexes
+try:
+    db.chat_invites.create_index([("to", pymongo.ASCENDING)], name="to")
+except: pass
+try:
+    db.chat_invites.create_index([("chat_id", pymongo.ASCENDING)], name="chat_id")
+except: pass
+
 # Create reports indexes
 try:
     db.reports.create_index([

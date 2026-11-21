@@ -261,6 +261,14 @@ def create_user_token(username: str, ip: str, used_token: Optional[str] = None) 
     return new_token
 
 
+def chat_ban(chat: dict, username: str) -> Optional[dict]:
+    """Return the user's active chat ban, or None."""
+    for ban in chat.get("bans", []):
+        if ban["username"] == username and (ban["expires"] is None or ban["expires"] > time.time()):
+            return ban
+    return None
+
+
 def update_settings(username, newdata):
     # Check datatype
     if not isinstance(username, str):
