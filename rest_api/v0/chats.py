@@ -1139,6 +1139,10 @@ async def create_chat_emote(chat_id: str, emote_type: Literal["emojis", "sticker
     if not data.name:
         return {"error": True, "type": "nameRequired"}, 400
 
+    # Names are unique per chat (for each emote type)
+    if db[f"chat_{emote_type}"].count_documents({"chat_id": chat_id, "name": data.name}, limit=1):
+        return {"error": True, "type": "nameTaken"}, 409
+
     # Claim file
     try:
         claim_file(emote_id, emote_type, request.user)
@@ -1179,6 +1183,10 @@ async def update_chat_emote(chat_id: str, emote_type: Literal["emojis", "sticker
     # Make sure a new name is being specified
     if not data.name:
         abort(400)
+
+    # Names are unique per chat (for each emote type)
+    if db[f"chat_{emote_type}"].count_documents({"chat_id": chat_id, "name": data.name, "_id": {"$ne": emote_id}}, limit=1):
+        return {"error": True, "type": "nameTaken"}, 409
 
     # Check authorization
     if not request.user:
