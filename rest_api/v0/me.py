@@ -1,4 +1,5 @@
-from quart import Blueprint, current_app as app, request, abort
+from quart import Blueprint, current_app as app, request, abort, send_file
+import os
 from quart_schema import validate_request, validate_querystring
 from pydantic import BaseModel, Field
 from typing import Optional, List, Literal
@@ -12,6 +13,7 @@ import uuid
 import secrets
 
 import security
+import data_export as data_export_builder
 from database import db, rdb, get_total_pages
 from uploads import claim_file, unclaim_file
 from utils import log
@@ -523,6 +525,27 @@ async def get_current_data_export():
     return data_export, 200
 
 
+@me_bp.get("/export/download")
+async def download_data_export():
+    if not request.user:
+        abort(401)
+
+    data_export = db.data_exports.find_one({
+        "user": request.user,
+        "status": "completed",
+        "completed_at": {"$gt": int(time.time()) - data_export_builder.EXPORT_TTL}
+    }, sort=[("completed_at", pymongo.DESCENDING)])
+    if not data_export or not os.path.exists(data_export_builder.export_path(data_export["_id"])):
+        abort(404)
+
+    return await send_file(
+        data_export_builder.export_path(data_export["_id"]),
+        mimetype="application/zip",
+        as_attachment=True,
+        attachment_filename=f"meower-data-{request.user}.zip"
+    )
+
+
 @me_bp.post("/export")
 async def request_data_export():
     # Check authorization
@@ -534,7 +557,7 @@ async def request_data_export():
         "user": request.user,
         "$or": [
             {"status": "pending"},
-            {"completed_at": {"$gt": int(time.time())-604800}}
+            {"status": "completed", "completed_at": {"$gt": int(time.time())-604800}}
         ]
     }) > 0:
         abort(429)
@@ -548,8 +571,8 @@ async def request_data_export():
     }
     db.data_exports.insert_one(data_export)
 
-    # Tell the data export service to check for new requests
-    rdb.publish("data_exports", "0")
+    # Build the export in the background
+    data_export_builder.start_export(data_export["_id"], request.user)
 
     # Return data export request
     return data_export, 200
