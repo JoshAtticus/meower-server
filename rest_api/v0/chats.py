@@ -23,6 +23,7 @@ class ChatBody(BaseModel):
     announce_deletes: bool = Field(default=None)
     announce_deleter: bool = Field(default=None)
     invites_enabled: bool = Field(default=None)
+    purpose: Optional[Literal["friends", "public", "private", "announcements", "emojis", "other"]] = Field(default=None)
 
     class Config:
         validate_assignment = True
@@ -133,6 +134,7 @@ async def create_chat(data: ChatBody):
         data.icon = ""
     if data.icon_color is None:
         data.icon_color = "000000"
+    roles, invites_enabled = chat_permissions.purpose_defaults(data.purpose)
     chat = {
         "_id": str(uuid.uuid4()),
         "type": 0,
@@ -146,9 +148,9 @@ async def create_chat(data: ChatBody):
         "deleted": False,
         "announce_deletes": False,
         "announce_deleter": False,
-        "roles": chat_permissions.default_roles(),
+        "roles": roles,
         "member_roles": {request.user: ["default", "administrator"]},
-        "invites_enabled": True,
+        "invites_enabled": invites_enabled,
         "bans": []
     }
     db.chats.insert_one(chat)

@@ -149,3 +149,24 @@ def ensure_roles(chat: dict) -> dict:
         "$unset": {"allow_pinning": ""}
     })
     return chat
+
+
+# Chat purposes chosen at creation tweak the preset roles / settings
+CHAT_PURPOSES = ["friends", "public", "private", "announcements", "emojis", "other"]
+
+
+def purpose_defaults(purpose) -> tuple:
+    """Return (roles, invites_enabled) for a new group chat's purpose."""
+    roles = default_roles()
+    invites_enabled = True
+    default_role = next(role for role in roles if role["_id"] == "default")
+    if purpose == "friends":
+        # Everyone can customise the chat, manage emotes and pin
+        for preset in ("stickerer", "customiser", "pinner"):
+            for perm in next(role for role in roles if role["_id"] == preset)["permissions"]:
+                default_role["permissions"][perm] = True
+    elif purpose == "private":
+        invites_enabled = False
+    elif purpose in ("announcements", "emojis"):
+        default_role["permissions"] = {}
+    return roles, invites_enabled
