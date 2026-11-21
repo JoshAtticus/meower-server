@@ -5,6 +5,7 @@ import uuid, time, msgpack, pymongo, re, copy, secrets
 from cloudlink import CloudlinkServer
 from database import db, rdb
 import security
+import chat_permissions
 
 """
 Meower Supporter Module
@@ -74,10 +75,13 @@ class Supporter:
                 "deleted": False
             }
         ]}))
-        for chat in chats:
+        for i, chat in enumerate(chats):
+            if chat.get("type") == 0:
+                chat = chat_permissions.ensure_roles(chat)
             if chat.get("dm_request"):
                 chat = security.normalize_dm_request(chat)
                 chat["dm_request"] = security.public_dm_request(chat["dm_request"])
+            chats[i] = chat
         return chats
 
     def create_post(

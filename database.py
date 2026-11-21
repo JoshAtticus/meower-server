@@ -343,4 +343,10 @@ if db.config.find_one({"_id": "migration", "database": {"$ne": CURRENT_DB_VERSIO
     db.config.update_one({"_id": "migration"}, {"$set": {"database": CURRENT_DB_VERSION}})
     log(f"[Migrator] Finished Migrating DB to version {CURRENT_DB_VERSION}")
 
+# Group chat roles (idempotent, runs on every startup)
+import chat_permissions
+for chat in db.chats.find({"type": 0, "roles": {"$exists": False}}, projection={"_id": 1}):
+    log(f"[Migrator] Adding roles to group chat {chat['_id']}")
+    chat_permissions.ensure_roles(db.chats.find_one({"_id": chat["_id"]}))
+
 print("") # finished startup logs

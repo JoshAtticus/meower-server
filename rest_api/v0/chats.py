@@ -5,6 +5,7 @@ from typing import Optional, Literal
 import pymongo, uuid, time, re, os
 
 import security
+import chat_permissions
 from database import db, get_total_pages
 from uploads import claim_file, unclaim_file
 from utils import log
@@ -19,13 +20,23 @@ class ChatBody(BaseModel):
     nickname: str = Field(default=None, min_length=1, max_length=32)
     icon: str = Field(default=None, max_length=24)
     icon_color: str = Field(default=None, min_length=6, max_length=6)  # hex code without the #
-    allow_pinning: bool = Field(default=None)
     announce_deletes: bool = Field(default=None)
     announce_deleter: bool = Field(default=None)
+    invites_enabled: bool = Field(default=None)
 
     class Config:
         validate_assignment = True
         str_strip_whitespace = True
+
+class RoleBody(BaseModel):
+    name: str = Field(min_length=1, max_length=32)
+    tier: int = Field(ge=0, le=3)
+    permissions: dict[str, bool] = Field(default_factory=dict)
+
+class RolePatchBody(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=32)
+    tier: Optional[int] = Field(default=None)
+    permissions: Optional[dict[str, Optional[bool]]] = Field(default=None)
 
 class EmoteBody(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=32, pattern=r"^[A-Za-z0-9_\-]+$")
@@ -36,6 +47,14 @@ class InviteBody(BaseModel):
 
 class BanBody(BaseModel):
     expires_in: Optional[int] = Field(default=None, ge=60, le=2592000)
+
+
+def missing_permission():
+    return {"error": True, "type": "missingPermission"}, 403
+
+
+def insufficient_rank():
+    return {"error": True, "type": "insufficientRank"}, 403
 
 
 @chats_bp.get("/")
@@ -101,8 +120,6 @@ async def create_chat(data: ChatBody):
         data.icon = ""
     if data.icon_color is None:
         data.icon_color = "000000"
-    if data.allow_pinning is None:
-        data.allow_pinning = False
     chat = {
         "_id": str(uuid.uuid4()),
         "type": 0,
@@ -114,9 +131,11 @@ async def create_chat(data: ChatBody):
         "created": int(time.time()),
         "last_active": int(time.time()),
         "deleted": False,
-        "allow_pinning": data.allow_pinning,
         "announce_deletes": False,
         "announce_deleter": False,
+        "roles": chat_permissions.default_roles(),
+        "member_roles": {request.user: ["default", "administrator"]},
+        "invites_enabled": True,
         "bans": []
     }
     db.chats.insert_one(chat)
@@ -150,6 +169,9 @@ async def get_chat(chat_id):
     chat = db.chats.find_one({"_id": chat_id, "members": request.user, "deleted": False})
     if not chat:
         abort(404)
+
+    # Migrate in roles for legacy group chats
+    chat = chat_permissions.ensure_roles(chat)
 
     # Normalize any expired DM request and only expose the public shape
     chat = security.normalize_dm_request(chat)
@@ -192,8 +214,25 @@ async def update_chat(chat_id, data: ChatBody):
     if not chat:
         abort(404)
 
-    # Make sure requester is owner
-    if chat["owner"] != request.user:
+    # Check permissions for each field being changed
+    if chat["type"] == 0:
+        chat = chat_permissions.ensure_roles(chat)
+        required = set()
+        if data.nickname is not None and chat["nickname"] != data.nickname:
+            required.add("change_name")
+        if data.icon is not None and chat["icon"] != data.icon:
+            required.add("change_icon" if data.icon else "delete_icon")
+        if data.icon_color is not None and chat["icon_color"] != data.icon_color:
+            required.add("change_color")
+        if (data.announce_deletes is not None and data.announce_deletes != chat.get("announce_deletes", False)) or \
+           (data.announce_deleter is not None and data.announce_deleter != chat.get("announce_deleter", False)):
+            required.add("change_settings")
+        if data.invites_enabled is not None and data.invites_enabled != chat.get("invites_enabled", True):
+            required.add("toggle_invites")
+        for perm in required:
+            if not chat_permissions.has(chat, request.user, perm):
+                return missing_permission()
+    elif chat["owner"] != request.user:
         abort(403)
 
     # Get updated values
@@ -226,13 +265,13 @@ async def update_chat(chat_id, data: ChatBody):
         updated_vals["icon_color"] = data.icon_color
         if data.icon is None or chat["icon"] == data.icon:
             app.supporter.create_post(chat_id, "Server", f"@{request.user} changed the icon of the group chat.", chat_members=chat["members"])
-    if data.allow_pinning is not None:
-        updated_vals["allow_pinning"] = data.allow_pinning
     if chat["type"] == 0:
         if data.announce_deletes is not None:
             updated_vals["announce_deletes"] = data.announce_deletes
         if data.announce_deleter is not None:
             updated_vals["announce_deleter"] = data.announce_deleter
+        if data.invites_enabled is not None:
+            updated_vals["invites_enabled"] = data.invites_enabled
     
     # Update chat
     db.chats.update_one({"_id": chat_id}, {"$set": updated_vals})
@@ -273,18 +312,26 @@ async def leave_chat(chat_id):
         abort(404)
 
     if chat["type"] == 0:
+        chat = chat_permissions.ensure_roles(chat)
+
         # Remove member
         chat["members"].remove(request.user)
 
         # Update chat if it's not empty, otherwise delete the chat
         if len(chat["members"]) > 0:
+            # Remove the leaver's roles
+            chat["member_roles"].pop(request.user, None)
+
             # Transfer ownership, if owner
             if chat["owner"] == request.user:
                 chat["owner"] = chat["members"][0]
-            
+                new_owner_roles = chat["member_roles"].setdefault(chat["owner"], ["default"])
+                if "administrator" not in new_owner_roles:
+                    new_owner_roles.append("administrator")
+
             # Update chat
             db.chats.update_one({"_id": chat_id}, {
-                "$set": {"owner": chat["owner"]},
+                "$set": {"owner": chat["owner"], "member_roles": chat["member_roles"]},
                 "$pull": {"members": request.user}
             })
 
@@ -292,7 +339,8 @@ async def leave_chat(chat_id):
             app.cl.send_event("update_chat", {
                 "_id": chat_id,
                 "owner": chat["owner"],
-                "members": chat["members"]
+                "members": chat["members"],
+                "member_roles": chat["member_roles"]
             }, usernames=chat["members"])
 
             # Send in-chat notification
@@ -416,6 +464,15 @@ async def add_chat_member(chat_id, username):
     if ban:
         return {"error": True, "type": "chatBanned", "expires": ban["expires"]}, 403
 
+    # Group chats require permission to add/invite members
+    if chat["type"] == 0:
+        chat = chat_permissions.ensure_roles(chat)
+        if not chat_permissions.has(chat, request.user, "invite_members"):
+            return missing_permission()
+        if not chat.get("invites_enabled", True) and request.user != chat["owner"] and \
+           not chat_permissions.has(chat, request.user, "toggle_invites"):
+            return {"error": True, "type": "invitesDisabled"}, 403
+
     # Make sure the chat isn't full
     if chat["type"] == 1 or len(chat["members"]) >= 256:
         return {"error": True, "type": "chatFull"}, 403
@@ -452,7 +509,12 @@ async def add_chat_member(chat_id, username):
 
     # Update chat
     chat["members"].append(username)
-    db.chats.update_one({"_id": chat_id}, {"$addToSet": {"members": username}})
+    if chat["type"] == 0:
+        chat["member_roles"][username] = ["default"]
+    db.chats.update_one({"_id": chat_id}, {
+        "$addToSet": {"members": username},
+        "$set": ({f"member_roles.{username}": ["default"]} if chat["type"] == 0 else {})
+    })
 
     # Send create chat event
     app.cl.send_event("create_chat", chat, usernames=[username])
@@ -460,7 +522,8 @@ async def add_chat_member(chat_id, username):
     # Send update chat event
     app.cl.send_event("update_chat", {
         "_id": chat_id,
-        "members": chat["members"]
+        "members": chat["members"],
+        "member_roles": chat.get("member_roles")
     }, usernames=chat["members"])
 
     # Send inbox message to user
@@ -504,13 +567,20 @@ async def remove_chat_member(chat_id, username):
     if not chat:
         abort(404)
 
-    # Make sure requester is owner
-    if chat["owner"] != request.user:
-        abort(403)
+    # Check remove_members permission and hierarchy
+    chat = chat_permissions.ensure_roles(chat)
+    if not chat_permissions.has(chat, request.user, "remove_members"):
+        return missing_permission()
+    if not chat_permissions.outranks(chat, request.user, username):
+        return insufficient_rank()
 
     # Update chat
     chat["members"].remove(username)
-    db.chats.update_one({"_id": chat_id}, {"$pull": {"members": username}})
+    chat["member_roles"].pop(username, None)
+    db.chats.update_one({"_id": chat_id}, {
+        "$pull": {"members": username},
+        "$unset": {f"member_roles.{username}": ""}
+    })
 
     # Send delete chat event to user
     app.cl.send_event("delete_chat", {"chat_id": chat_id}, usernames=[username])
@@ -518,7 +588,8 @@ async def remove_chat_member(chat_id, username):
     # Send update chat event
     app.cl.send_event("update_chat", {
         "_id": chat_id,
-        "members": chat["members"]
+        "members": chat["members"],
+        "member_roles": chat["member_roles"]
     }, usernames=chat["members"])
 
     # Send inbox message to user
@@ -572,13 +643,21 @@ async def transfer_chat_ownership(chat_id, username):
         return chat, 200
 
     # Update chat
+    if chat["type"] == 0:
+        chat = chat_permissions.ensure_roles(chat)
+        new_owner_roles = chat["member_roles"].setdefault(username, ["default"])
+        if "administrator" not in new_owner_roles:
+            new_owner_roles.append("administrator")
     chat["owner"] = username
-    db.chats.update_one({"_id": chat_id}, {"$set": {"owner": username}})
+    db.chats.update_one({"_id": chat_id}, {
+        "$set": ({"owner": username, "member_roles": chat["member_roles"]} if chat["type"] == 0 else {"owner": username})
+    })
 
     # Send update chat event
     app.cl.send_event("update_chat", {
         "_id": chat_id,
-        "owner": chat["owner"]
+        "owner": chat["owner"],
+        "member_roles": chat.get("member_roles")
     }, usernames=chat["members"])
 
     # Send in-chat notification
@@ -628,6 +707,14 @@ async def create_chat_invite(chat_id, data: InviteBody):
     # Group chats only
     if chat["type"] != 0:
         abort(400)
+
+    # Check invite permission (and whether invites are enabled)
+    chat = chat_permissions.ensure_roles(chat)
+    if not chat_permissions.has(chat, request.user, "invite_members"):
+        return missing_permission()
+    if not chat.get("invites_enabled", True) and request.user != chat["owner"] and \
+       not chat_permissions.has(chat, request.user, "toggle_invites"):
+        return {"error": True, "type": "invitesDisabled"}, 403
 
     username = data.username
 
@@ -766,13 +853,16 @@ async def ban_chat_member(chat_id, username, data: BanBody):
     if not chat:
         abort(404)
 
-    # Make sure requester is owner
-    if chat["owner"] != request.user:
-        abort(403)
+    # Check ban_members permission and hierarchy
+    chat = chat_permissions.ensure_roles(chat)
+    if not chat_permissions.has(chat, request.user, "ban_members"):
+        return missing_permission()
+    if username == chat["owner"] or not chat_permissions.outranks(chat, request.user, username):
+        return insufficient_rank()
 
     # Make sure the target is a member (or already banned) and isn't the owner
     is_member = username in chat["members"]
-    if username == chat["owner"] or not (is_member or security.chat_ban(chat, username)):
+    if not (is_member or security.chat_ban(chat, username)):
         abort(400)
 
     # Replace any existing ban for the user
@@ -785,9 +875,11 @@ async def ban_chat_member(chat_id, username, data: BanBody):
     db.chats.update_one({"_id": chat_id}, {"$pull": {"bans": {"username": username}}})
     db.chats.update_one({"_id": chat_id}, {
         "$push": {"bans": ban},
-        "$pull": {"members": username}
+        "$pull": {"members": username},
+        "$unset": {f"member_roles.{username}": ""}
     })
     chat["bans"] = [b for b in chat.get("bans", []) if b["username"] != username] + [ban]
+    chat["member_roles"].pop(username, None)
     if is_member:
         chat["members"].remove(username)
 
@@ -802,6 +894,7 @@ async def ban_chat_member(chat_id, username, data: BanBody):
     app.cl.send_event("update_chat", {
         "_id": chat_id,
         "members": chat["members"],
+        "member_roles": chat["member_roles"],
         "bans": chat["bans"]
     }, usernames=chat["members"])
 
@@ -825,9 +918,10 @@ async def get_chat_bans(chat_id):
     if not chat:
         abort(404)
 
-    # Only the owner can view bans
-    if chat["owner"] != request.user:
-        abort(403)
+    # Only members who can ban may view bans
+    chat = chat_permissions.ensure_roles(chat)
+    if not chat_permissions.has(chat, request.user, "ban_members"):
+        return missing_permission()
 
     return {
         "error": False,
@@ -858,9 +952,12 @@ async def unban_chat_member(chat_id, username):
     if not chat:
         abort(404)
 
-    # Make sure requester is owner
-    if chat["owner"] != request.user:
-        abort(403)
+    # Check ban_members permission (and hierarchy if the target is still a member)
+    chat = chat_permissions.ensure_roles(chat)
+    if not chat_permissions.has(chat, request.user, "ban_members"):
+        return missing_permission()
+    if username in chat["members"] and not chat_permissions.outranks(chat, request.user, username):
+        return insufficient_rank()
 
     # Remove the ban
     db.chats.update_one({"_id": chat_id}, {"$pull": {"bans": {"username": username}}})
@@ -1006,8 +1103,12 @@ async def create_chat_emote(chat_id: str, emote_type: Literal["emojis", "sticker
     if not chat:
         abort(404)
 
-    # Make sure chat is DM or requester is owner
-    if chat["type"] != 1 and chat["owner"] != request.user:
+    # Check add_emotes permission (DMs are unrestricted)
+    if chat["type"] == 0:
+        chat = chat_permissions.ensure_roles(chat)
+        if not chat_permissions.has(chat, request.user, "add_emotes"):
+            return missing_permission()
+    elif chat["type"] != 1:
         abort(403)
 
     # Make sure there's not too many emotes in the chat (250 for emojis, 50 for stickers)
@@ -1083,8 +1184,12 @@ async def update_chat_emote(chat_id: str, emote_type: Literal["emojis", "sticker
     if not chat:
         abort(404)
 
-    # Make sure chat is DM or requester is owner
-    if chat["type"] != 1 and chat["owner"] != request.user:
+    # Check edit_emotes permission (DMs are unrestricted)
+    if chat["type"] == 0:
+        chat = chat_permissions.ensure_roles(chat)
+        if not chat_permissions.has(chat, request.user, "edit_emotes"):
+            return missing_permission()
+    elif chat["type"] != 1:
         abort(403)
 
     # Get emote
@@ -1135,8 +1240,12 @@ async def delete_chat_emote(chat_id: str, emote_type: Literal["emojis", "sticker
     if not chat:
         abort(404)
 
-    # Make sure chat is DM or requester is owner
-    if chat["type"] != 1 and chat["owner"] != request.user:
+    # Check delete_emotes permission (DMs are unrestricted)
+    if chat["type"] == 0:
+        chat = chat_permissions.ensure_roles(chat)
+        if not chat_permissions.has(chat, request.user, "delete_emotes"):
+            return missing_permission()
+    elif chat["type"] != 1:
         abort(403)
 
     # Delete emote
@@ -1150,3 +1259,214 @@ async def delete_chat_emote(chat_id: str, emote_type: Literal["emojis", "sticker
     unclaim_file(emote_id)
 
     return {"error": False}, 200
+
+
+def get_role(chat: dict, role_id: str):
+    return next((r for r in chat.get("roles", []) if r["_id"] == role_id), None)
+
+
+def send_roles_update(chat: dict):
+    payload = {
+        "_id": chat["_id"],
+        "roles": chat["roles"],
+        "member_roles": chat["member_roles"]
+    }
+    if "invites_enabled" in chat:
+        payload["invites_enabled"] = chat["invites_enabled"]
+    app.cl.send_event("update_chat", payload, usernames=chat["members"])
+
+
+async def get_group_chat_for_roles(chat_id):
+    # Auth + ratelimit shared by all role endpoints
+    if not request.user:
+        abort(401)
+    if security.ratelimited(f"update_chat:{request.user}"):
+        abort(429)
+    security.ratelimit(f"update_chat:{request.user}", 5, 5)
+
+    chat = db.chats.find_one({"_id": chat_id, "members": request.user, "deleted": False})
+    if not chat:
+        abort(404)
+    if chat["type"] != 0:
+        abort(400)
+    return chat_permissions.ensure_roles(chat)
+
+
+@chats_bp.post("/<chat_id>/roles")
+@validate_request(RoleBody)
+async def create_chat_role(chat_id, data: RoleBody):
+    chat = await get_group_chat_for_roles(chat_id)
+
+    # Check create_roles permission
+    if not chat_permissions.has(chat, request.user, "create_roles"):
+        return missing_permission()
+
+    # Non-owner/admin actors can only create roles below their own rank
+    if request.user != chat["owner"] and \
+            chat_permissions.rank(chat, request.user) < chat_permissions.ADMIN_TIER and \
+            data.tier >= chat_permissions.rank(chat, request.user):
+        return insufficient_rank()
+
+    # Validate permissions
+    role = {
+        "_id": chat_permissions.new_role_id(),
+        "name": data.name,
+        "tier": data.tier,
+        "permissions": {},
+        "preset": False
+    }
+    for perm, val in data.permissions.items():
+        if perm not in chat_permissions.PERMISSIONS:
+            return {"error": True, "type": "unknownPermission"}, 400
+        if val is True:
+            if chat_permissions.PERMISSIONS[perm] > data.tier:
+                return {"error": True, "type": "permissionAboveRoleTier"}, 400
+            if not chat_permissions.can_grant_perm(chat, request.user, perm):
+                return missing_permission()
+        role["permissions"][perm] = val
+
+    # Create role
+    chat["roles"].append(role)
+    db.chats.update_one({"_id": chat_id}, {"$push": {"roles": role}})
+
+    # Send update chat event
+    send_roles_update(chat)
+
+    role["error"] = False
+    return role, 200
+
+
+@chats_bp.patch("/<chat_id>/roles/<role_id>")
+@validate_request(RolePatchBody)
+async def update_chat_role(chat_id, role_id, data: RolePatchBody):
+    chat = await get_group_chat_for_roles(chat_id)
+
+    # Tier is immutable
+    if data.tier is not None:
+        abort(400)
+
+    # Get role
+    role = get_role(chat, role_id)
+    if not role:
+        abort(404)
+
+    # Check modify_roles permission (the administrator role can never be edited)
+    if not chat_permissions.has(chat, request.user, "modify_roles") or \
+            not chat_permissions.can_manage_role(chat, request.user, role):
+        return missing_permission()
+
+    # Validate permission changes
+    new_permissions = dict(role["permissions"])
+    if data.permissions:
+        for perm, val in data.permissions.items():
+            if perm not in chat_permissions.PERMISSIONS:
+                return {"error": True, "type": "unknownPermission"}, 400
+            if role["permissions"].get(perm) == val:
+                continue
+            if val is True and chat_permissions.PERMISSIONS[perm] > role["tier"]:
+                return {"error": True, "type": "permissionAboveRoleTier"}, 400
+            if not chat_permissions.can_grant_perm(chat, request.user, perm):
+                return missing_permission()
+            if val is None:
+                new_permissions.pop(perm, None)
+            else:
+                new_permissions[perm] = val
+
+    # Update role
+    if data.name is not None:
+        role["name"] = data.name
+    role["permissions"] = new_permissions
+    db.chats.update_one({"_id": chat_id}, {"$set": {"roles": chat["roles"]}})
+
+    # Send update chat event
+    send_roles_update(chat)
+
+    role["error"] = False
+    return role, 200
+
+
+@chats_bp.delete("/<chat_id>/roles/<role_id>")
+async def delete_chat_role(chat_id, role_id):
+    chat = await get_group_chat_for_roles(chat_id)
+
+    # Get role
+    role = get_role(chat, role_id)
+    if not role:
+        abort(404)
+
+    # The default and administrator roles can never be deleted
+    if role_id in {"default", "administrator"}:
+        abort(403)
+
+    # Check delete_roles permission
+    if not chat_permissions.has(chat, request.user, "delete_roles") or \
+            not chat_permissions.can_manage_role(chat, request.user, role):
+        return missing_permission()
+
+    # Remove role and unassign it from every member
+    chat["roles"].remove(role)
+    for roles in chat["member_roles"].values():
+        while role_id in roles:
+            roles.remove(role_id)
+    db.chats.update_one({"_id": chat_id}, {
+        "$set": {"roles": chat["roles"], "member_roles": chat["member_roles"]}
+    })
+
+    # Send update chat event
+    send_roles_update(chat)
+
+    return {"error": False}, 200
+
+
+async def update_member_role(chat_id, username, role_id, assign: bool):
+    chat = await get_group_chat_for_roles(chat_id)
+
+    # Get role and check target is a member
+    role = get_role(chat, role_id)
+    if not role:
+        abort(404)
+    if username not in chat["members"]:
+        abort(404)
+
+    # Check assign_roles permission
+    if not chat_permissions.has(chat, request.user, "assign_roles"):
+        return missing_permission()
+
+    # Actors cannot change their own roles unless they're the owner
+    if username == request.user and request.user != chat["owner"]:
+        return insufficient_rank()
+
+    # Check hierarchy
+    if not chat_permissions.outranks(chat, request.user, username):
+        return insufficient_rank()
+
+    # The administrator role can only be assigned/unassigned by the owner
+    # and can never be removed from the owner
+    if role_id == "administrator":
+        if request.user != chat["owner"] or (not assign and username == chat["owner"]):
+            return missing_permission()
+    elif not chat_permissions.can_manage_role(chat, request.user, role):
+        return missing_permission()
+
+    # Update member roles
+    member_roles = chat["member_roles"].setdefault(username, [])
+    if assign and role_id not in member_roles:
+        member_roles.append(role_id)
+    elif not assign and role_id in member_roles:
+        member_roles.remove(role_id)
+    db.chats.update_one({"_id": chat_id}, {"$set": {f"member_roles.{username}": member_roles}})
+
+    # Send update chat event
+    send_roles_update(chat)
+
+    return {"error": False}, 200
+
+
+@chats_bp.put("/<chat_id>/members/<username>/roles/<role_id>")
+async def assign_member_role(chat_id, username, role_id):
+    return await update_member_role(chat_id, username, role_id, True)
+
+
+@chats_bp.delete("/<chat_id>/members/<username>/roles/<role_id>")
+async def unassign_member_role(chat_id, username, role_id):
+    return await update_member_role(chat_id, username, role_id, False)

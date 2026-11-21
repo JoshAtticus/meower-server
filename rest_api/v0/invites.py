@@ -2,6 +2,7 @@ from quart import Blueprint, current_app as app, request, abort
 import time
 
 import security
+import chat_permissions
 from database import db
 
 
@@ -87,8 +88,13 @@ async def accept_invite(invite_id):
     if request.user in chat["members"]:
         chat["error"] = False
         return chat, 200
+    chat = chat_permissions.ensure_roles(chat)
     chat["members"].append(request.user)
-    db.chats.update_one({"_id": invite["chat_id"]}, {"$addToSet": {"members": request.user}})
+    chat["member_roles"][request.user] = ["default"]
+    db.chats.update_one({"_id": invite["chat_id"]}, {
+        "$addToSet": {"members": request.user},
+        "$set": {f"member_roles.{request.user}": ["default"]}
+    })
 
     # Send create chat event
     app.cl.send_event("create_chat", chat, usernames=[request.user])
@@ -96,7 +102,8 @@ async def accept_invite(invite_id):
     # Send update chat event
     app.cl.send_event("update_chat", {
         "_id": invite["chat_id"],
-        "members": chat["members"]
+        "members": chat["members"],
+        "member_roles": chat["member_roles"]
     }, usernames=chat["members"])
 
     # Send in-chat notification
@@ -122,9 +129,10 @@ async def delete_invite(invite_id):
     invite = db.chat_invites.find_one({"_id": invite_id})
     if not invite:
         abort(404)
-    if invite["to"] != request.user:
+    if invite["to"] != request.user and invite["from"] != request.user:
         chat = db.chats.find_one({"_id": invite["chat_id"], "deleted": False})
-        if not chat or chat["owner"] != request.user:
+        if not chat or chat["type"] != 0 or \
+                not chat_permissions.has(chat_permissions.ensure_roles(chat), request.user, "remove_members"):
             abort(403)
 
     # Delete invite

@@ -7,6 +7,7 @@ from copy import copy
 import pymongo, uuid, time, emoji, msgpack
 
 import security
+import chat_permissions
 from database import db, rdb, get_total_pages
 from uploads import claim_file, unclaim_file
 from utils import log
@@ -312,8 +313,11 @@ async def pin_post(post_id):
     if not chat:
         abort(401)
 
-    if not (request.user == chat["owner"] or chat["allow_pinning"] or has_perm):
-        abort(401)
+    if not has_perm:
+        allowed = chat.get("type") == 0 and chat_permissions.has(
+            chat_permissions.ensure_roles(chat), request.user, "pin_messages")
+        if not allowed:
+            return {"error": True, "type": "missingPermission"}, 403
 
     was_pinned = post.get("pinned", False)
 
@@ -352,8 +356,11 @@ async def unpin_post(post_id):
     if not chat:
         abort(401)
 
-    if not (request.user == chat["owner"] or chat["allow_pinning"] or has_perm):
-        abort(401)
+    if not has_perm:
+        allowed = chat.get("type") == 0 and chat_permissions.has(
+            chat_permissions.ensure_roles(chat), request.user, "unpin_messages")
+        if not allowed:
+            return {"error": True, "type": "missingPermission"}, 403
 
 
     was_pinned = post.get("pinned", False)
@@ -460,12 +467,28 @@ async def delete_post(query_args: PostIdQueryArgs):
             "_id": post["post_origin"],
             "members": request.user,
             "deleted": False
-        }, projection={"owner": 1, "members": 1, "type": 1, "announce_deletes": 1, "announce_deleter": 1})
+        }, projection={"owner": 1, "members": 1, "type": 1, "announce_deletes": 1,
+                       "announce_deleter": 1, "roles": 1, "member_roles": 1})
         if not chat:
             abort(404)
-    if post["post_origin"] == "inbox" or post["u"] != request.user:
-        if (post["post_origin"] in ["home", "inbox"]) or (chat["owner"] != request.user):
+    if post["post_origin"] in {"home", "inbox"}:
+        if post["post_origin"] == "inbox" or post["u"] != request.user:
             abort(403)
+    elif chat["type"] == 0:
+        chat = chat_permissions.ensure_roles(chat)
+        if post["u"] == request.user:
+            if not chat_permissions.has(chat, request.user, "delete_own_messages"):
+                return {"error": True, "type": "missingPermission"}, 403
+        elif post["u"] == "Server":
+            if chat_permissions.rank(chat, request.user) < chat_permissions.ADMIN_TIER:
+                return {"error": True, "type": "insufficientRank"}, 403
+        else:
+            if not chat_permissions.has(chat, request.user, "delete_others_messages"):
+                return {"error": True, "type": "missingPermission"}, 403
+            if not chat_permissions.outranks(chat, request.user, post["u"]):
+                return {"error": True, "type": "insufficientRank"}, 403
+    elif post["u"] != request.user:
+        abort(403)
 
     # Delete attachments
     for attachment in post["attachments"]:
@@ -601,7 +624,8 @@ async def create_chat_post(chat_id, data: PostBody):
             "_id": chat_id,
             "members": request.user,
             "deleted": False
-        }, projection={"type": 1, "members": 1, "bans": 1, "dm_request": 1})
+        }, projection={"type": 1, "members": 1, "bans": 1, "dm_request": 1,
+                       "owner": 1, "roles": 1, "member_roles": 1})
         if not chat:
             abort(404)
 
@@ -609,6 +633,12 @@ async def create_chat_post(chat_id, data: PostBody):
         ban = security.chat_ban(chat, request.user)
         if ban:
             return {"error": True, "type": "chatBanned", "expires": ban["expires"]}, 403
+
+        # Group chats require permission to send messages
+        if chat["type"] == 0:
+            chat = chat_permissions.ensure_roles(chat)
+            if not chat_permissions.has(chat, request.user, "send_messages"):
+                return {"error": True, "type": "missingPermission"}, 403
 
         # DM stuff
         if chat["type"] == 1:
