@@ -15,6 +15,31 @@ from utils import log
 posts_bp = Blueprint("posts_bp", __name__, url_prefix="/posts")
 
 
+def can_view_post(post: dict) -> bool:
+    if post["post_origin"] == "inbox":
+        return post["u"] in ["Server", request.user]
+    elif post["post_origin"] != "home":
+        return bool(request.user) and bool(db.chats.count_documents({
+            "_id": post["post_origin"],
+            "members": request.user,
+            "deleted": False
+        }, limit=1))
+    return True
+
+
+def post_event_recipients(post: dict) -> Optional[list[str]]:
+    if post["post_origin"] == "home" or (post["post_origin"] == "inbox" and post["u"] == "Server"):
+        return None
+    elif post["post_origin"] == "inbox":
+        return [post["u"]]
+    else:
+        chat = db.chats.find_one({
+            "_id": post["post_origin"],
+            "deleted": False
+        }, projection={"members": 1})
+        return chat["members"] if chat else []
+
+
 class PostIdQueryArgs(BaseModel):
     id: str = Field()
 
@@ -92,6 +117,8 @@ async def get_post_context(post_id, query_args: ContextQueryArgs):
         "post_origin": post["post_origin"],
         "isDeleted": False
     }
+    if post["post_origin"] == "inbox":
+        base_query["u"] = {"$in": ["Server", request.user] if request.user else ["Server"]}
     before = list(db.posts.find(
         {**base_query, "_id": {"$gt": post_id}},
         sort=[("_id", pymongo.ASCENDING)],
@@ -192,8 +219,14 @@ async def update_post(query_args: PostIdQueryArgs, data: PostBody):
 async def report_post(post_id, data: ReportBody):
     if not request.user:
         abort(401)
+
+    # Check ratelimit
+    if security.ratelimited(f"report:{request.user}"):
+        abort(429)
+
+    # Get post and check access
     post = db.posts.find_one({"_id": post_id})
-    if not post:
+    if not post or not can_view_post(post):
         abort(404)
 
     # Send to files automod if there are attachments
@@ -718,7 +751,7 @@ async def add_post_reaction(post_id: str, emoji_reaction: str):
         "post_id": post["_id"],
         "emoji": emoji_reaction,
         "username": request.user
-    })
+    }, usernames=post_event_recipients(post))
 
     return {"error": False}, 200
 
@@ -736,14 +769,6 @@ async def remove_post_reaction(post_id: str, emoji_reaction: str, username: str)
     if security.ratelimited(f"react:{request.user}"):
         abort(429)
     security.ratelimit(f"react:{request.user}", 5, 5)
-
-    # Make sure reaction exists
-    if not db.post_reactions.count_documents({"_id": {
-        "post_id": post_id,
-        "emoji": emoji_reaction,
-        "user": username
-    }}, limit=1):
-        abort(404)
 
     # Get necessary post details and check access
     post = db.posts.find_one({
@@ -773,6 +798,14 @@ async def remove_post_reaction(post_id: str, emoji_reaction: str, username: str)
         if (post["post_origin"] in ["home", "inbox"]) or (chat["owner"] != request.user):
             abort(403)
 
+    # Make sure reaction exists
+    if not db.post_reactions.count_documents({"_id": {
+        "post_id": post["_id"],
+        "emoji": emoji_reaction,
+        "user": username
+    }}, limit=1):
+        abort(404)
+
     # Remove reaction
     db.post_reactions.delete_one({"_id": {
         "post_id": post["_id"],
@@ -801,6 +834,6 @@ async def remove_post_reaction(post_id: str, emoji_reaction: str, username: str)
         "post_id": post["_id"],
         "emoji": emoji_reaction,
         "username": username
-    })
+    }, usernames=post_event_recipients(post))
 
     return {"error": False}, 200

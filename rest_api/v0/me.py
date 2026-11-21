@@ -418,6 +418,10 @@ async def reset_mfa_recovery_code(data: ResetMFARecoveryCodeBody):
     if not request.user:
         abort(401)
 
+    # Check ratelimit
+    if security.ratelimited(f"login:u:{request.user}"):
+        abort(429)
+
     # Check password
     account = db.usersv0.find_one({"_id": request.user}, projection={"pswd": 1})
     if not security.check_password_hash(data.password, account["pswd"]):

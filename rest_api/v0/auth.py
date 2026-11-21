@@ -157,7 +157,7 @@ async def register(data: AuthRequest):
         return {"error": True, "type": "usernameExists"}, 409
 
     # Check captcha
-    if os.getenv("CAPTCHA_SECRET") and not (hasattr(request, "bypass_captcha") and request.bypass_captcha):
+    if os.getenv("CAPTCHA_SECRET"):
         if not requests.post("https://api.hcaptcha.com/siteverify", data={
             "secret": os.getenv("CAPTCHA_SECRET"),
             "response": data.captcha,
