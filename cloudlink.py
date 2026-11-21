@@ -45,6 +45,7 @@ class CloudlinkServer:
             #"Disabled": "E:122 | Command disabled by sysadmin",  -- deprecated
             "PasswordInvalid": "I:011 | Invalid Password",
             "PasswordRecentlyChanged": "E:126 | Password recently changed",
+            "InvalidCaptcha": "E:127 | Invalid captcha",
             "IDExists": "I:015 | Account exists",
             "2FARequired": "I:016 | 2FA Required",
             #"MissingPermissions": "I:017 | Missing permissions",  -- deprecated
@@ -207,11 +208,14 @@ class CloudlinkServer:
             if client.proto_version == 0
         }, json.dumps(val))
 
-    def get_ulist(self):
-        ulist = ";".join(
+    def get_visible_usernames(self) -> list[str]:
+        return [
             username for username in self.usernames.keys()
             if username not in self.hidden_usernames
-        )
+        ]
+
+    def get_ulist(self):
+        ulist = ";".join(self.get_visible_usernames())
         if ulist:
             ulist += ";"
         return ulist
@@ -343,6 +347,8 @@ class CloudlinkClient:
                     self.send_statuscode("Syntax", listener)
                 case "usernameExists":
                     self.send_statuscode("IDExists", listener)
+                case "invalidCaptcha":
+                    self.send_statuscode("InvalidCaptcha", listener)
                 case "Unauthorized":
                     self.send_statuscode("PasswordInvalid", listener)
                 case "passwordRecentlyChanged":
@@ -425,6 +431,7 @@ class CloudlinkCommands:
             resp = client.proxy_api_request("/auth/register", "post", json={
                 "username": val.get("username"),
                 "password": val.get("pswd"),
+                "captcha": val.get("captcha", ""),
             }, listener=listener)
         except:
             print(full_stack())

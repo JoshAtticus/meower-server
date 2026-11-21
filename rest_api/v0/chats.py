@@ -335,6 +335,41 @@ async def emit_typing(chat_id):
     return {"error": False}, 200
 
 
+def send_chat_invite(chat: dict, username: str, expires_in: Optional[int] = None):
+    # Clean up expired invites and make sure there's no pending invite already
+    db.chat_invites.delete_many({"chat_id": chat["_id"], "expires": {"$lt": int(time.time())}})
+    if db.chat_invites.count_documents({"chat_id": chat["_id"], "to": username}, limit=1):
+        return {"error": True, "type": "inviteAlreadyExists"}, 409
+
+    # Create invite
+    invite = {
+        "_id": str(uuid.uuid4()),
+        "chat_id": chat["_id"],
+        "from": request.user,
+        "to": username,
+        "created": int(time.time()),
+        "expires": (int(time.time()) + expires_in) if expires_in else None
+    }
+    db.chat_invites.insert_one(invite)
+
+    # Send invite event to the invitee
+    app.cl.send_event("chat_invite", {
+        **invite,
+        "chat_nickname": chat["nickname"]
+    }, usernames=[username])
+
+    # Send inbox message to user
+    app.supporter.create_post("inbox", username, f"@{request.user} invited you to join the group chat '{chat['nickname']}'! You can accept or decline the invite from your invites page.")
+
+    # Notify chat members so pending invite lists update
+    app.cl.send_event("chat_invites_update", {
+        "chat_id": chat["_id"]
+    }, usernames=chat["members"])
+
+    invite["error"] = False
+    return invite, 200
+
+
 @chats_bp.put("/<chat_id>/members/<username>")
 async def add_chat_member(chat_id, username):
     # Check authorization
@@ -356,6 +391,11 @@ async def add_chat_member(chat_id, username):
     chat = db.chats.find_one({"_id": chat_id, "members": request.user, "deleted": False})
     if not chat:
         abort(404)
+
+    # Make sure the requester isn't banned from the chat
+    ban = security.chat_ban(chat, request.user)
+    if ban:
+        return {"error": True, "type": "chatBanned", "expires": ban["expires"]}, 403
 
     # Make sure the chat isn't full
     if chat["type"] == 1 or len(chat["members"]) >= 256:
@@ -386,6 +426,10 @@ async def add_chat_member(chat_id, username):
         }
     ]}, limit=1) > 0:
         abort(403)
+
+    # Only mutual friends can be added directly, everyone else gets an invite
+    if not security.are_friends(request.user, username):
+        return send_chat_invite(chat, username)
 
     # Update chat
     chat["members"].append(username)
@@ -557,6 +601,11 @@ async def create_chat_invite(chat_id, data: InviteBody):
     if not chat:
         abort(404)
 
+    # Make sure the requester isn't banned from the chat
+    ban = security.chat_ban(chat, request.user)
+    if ban:
+        return {"error": True, "type": "chatBanned", "expires": ban["expires"]}, 403
+
     # Group chats only
     if chat["type"] != 0:
         abort(400)
@@ -593,38 +642,7 @@ async def create_chat_invite(chat_id, data: InviteBody):
     ]}, limit=1) > 0:
         abort(403)
 
-    # Clean up expired invites and make sure there's no pending invite already
-    db.chat_invites.delete_many({"chat_id": chat_id, "expires": {"$lt": int(time.time())}})
-    if db.chat_invites.count_documents({"chat_id": chat_id, "to": username}, limit=1):
-        return {"error": True, "type": "inviteAlreadyExists"}, 409
-
-    # Create invite
-    invite = {
-        "_id": str(uuid.uuid4()),
-        "chat_id": chat_id,
-        "from": request.user,
-        "to": username,
-        "created": int(time.time()),
-        "expires": (int(time.time()) + data.expires_in) if data.expires_in else None
-    }
-    db.chat_invites.insert_one(invite)
-
-    # Send invite event to the invitee
-    app.cl.send_event("chat_invite", {
-        **invite,
-        "chat_nickname": chat["nickname"]
-    }, usernames=[username])
-
-    # Send inbox message to user
-    app.supporter.create_post("inbox", username, f"@{request.user} invited you to join the group chat '{chat['nickname']}'! You can accept or decline the invite from your invites page.")
-
-    # Notify chat members so pending invite lists update
-    app.cl.send_event("chat_invites_update", {
-        "chat_id": chat_id
-    }, usernames=chat["members"])
-
-    invite["error"] = False
-    return invite, 200
+    return send_chat_invite(chat, username, data.expires_in)
 
 
 @chats_bp.get("/<chat_id>/invites")
@@ -728,8 +746,9 @@ async def ban_chat_member(chat_id, username, data: BanBody):
     if chat["owner"] != request.user:
         abort(403)
 
-    # Make sure the target is a member and isn't the owner
-    if username not in chat["members"] or username == chat["owner"]:
+    # Make sure the target is a member (or already banned) and isn't the owner
+    is_member = username in chat["members"]
+    if username == chat["owner"] or not (is_member or security.chat_ban(chat, username)):
         abort(400)
 
     # Replace any existing ban for the user
@@ -740,15 +759,25 @@ async def ban_chat_member(chat_id, username, data: BanBody):
         "expires": (int(time.time()) + data.expires_in) if data.expires_in else None
     }
     db.chats.update_one({"_id": chat_id}, {"$pull": {"bans": {"username": username}}})
-    db.chats.update_one({"_id": chat_id}, {"$push": {"bans": ban}})
+    db.chats.update_one({"_id": chat_id}, {
+        "$push": {"bans": ban},
+        "$pull": {"members": username}
+    })
     chat["bans"] = [b for b in chat.get("bans", []) if b["username"] != username] + [ban]
+    if is_member:
+        chat["members"].remove(username)
 
-    # Revoke any pending invites for the user
-    db.chat_invites.delete_many({"chat_id": chat_id, "to": username})
+    # Revoke any pending invites for and from the user
+    db.chat_invites.delete_many({"chat_id": chat_id, "$or": [{"to": username}, {"from": username}]})
+
+    # Send delete chat event to user
+    if is_member:
+        app.cl.send_event("delete_chat", {"chat_id": chat_id}, usernames=[username])
 
     # Send update chat event
     app.cl.send_event("update_chat", {
         "_id": chat_id,
+        "members": chat["members"],
         "bans": chat["bans"]
     }, usernames=chat["members"])
 

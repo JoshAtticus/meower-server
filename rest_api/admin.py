@@ -104,6 +104,30 @@ class GetAnnouncementsQueryArgs(BaseModel):
     page: Optional[int] = Field(default=1, ge=1)
 
 
+USER_MODERATION_PERMISSIONS = (
+    security.AdminPermissions.VIEW_POSTS,
+    security.AdminPermissions.DELETE_POSTS,
+    security.AdminPermissions.VIEW_ALTS,
+    security.AdminPermissions.SEND_ALERTS,
+    security.AdminPermissions.KICK_USERS,
+    security.AdminPermissions.CLEAR_PROFILE_DETAILS,
+    security.AdminPermissions.VIEW_BAN_STATES,
+    security.AdminPermissions.EDIT_BAN_STATES,
+    security.AdminPermissions.DELETE_USERS,
+    security.AdminPermissions.VIEW_IPS,
+)
+
+
+def can_moderate_users() -> bool:
+    return any(security.has_permission(request.permissions, permission) for permission in USER_MODERATION_PERMISSIONS)
+
+
+def can_view_post_origin(post_origin: str) -> bool:
+    if post_origin in ["home", "inbox"]:
+        return True
+    return security.has_permission(request.permissions, security.AdminPermissions.VIEW_CHATS)
+
+
 @admin_bp.before_request
 async def check_admin_perms():
     if request.method != "OPTIONS":
@@ -358,6 +382,10 @@ async def get_post(post_id):
     if not post:
         abort(404)
 
+    # Chat posts require chat viewing permission
+    if not can_view_post_origin(post["post_origin"]):
+        abort(403)
+
     # Return post
     post["error"] = False
     return app.supporter.parse_posts_v0(
@@ -460,6 +488,10 @@ async def restore_post(post_id):
 @admin_bp.get("/users")
 @validate_querystring(GetUsersQueryArgs)
 async def get_users(query_args: GetUsersQueryArgs):
+    # Check permissions
+    if not can_moderate_users():
+        abort(403)
+
     # Get usernames
     usernames = [user["_id"] for user in db.usersv0.find({}, sort=[("created", pymongo.DESCENDING)], skip=(query_args.page-1)*25, limit=25)]
 
@@ -477,6 +509,10 @@ async def get_users(query_args: GetUsersQueryArgs):
 
 @admin_bp.get("/users/<username>")
 async def get_user(username):
+    # Check permissions
+    if not can_moderate_users():
+        abort(403)
+
     # Get account
     account = db.usersv0.find_one({"_id": username})
     if not account:
@@ -724,12 +760,16 @@ async def get_user_posts(username, query_args: GetUserPostsQueryArgs):
 
     # Get posts
     if query_args.origin:
+        if not can_view_post_origin(query_args.origin):
+            abort(403)
         query = {
             "u": username,
             "post_origin": query_args.origin
         }
-    else:
+    elif security.has_permission(request.permissions, security.AdminPermissions.VIEW_CHATS):
         query = {"u": username}
+    else:
+        query = {"u": username, "post_origin": {"$in": ["home", "inbox"]}}
     posts = db.posts.find(
         query, sort=[("t.e", pymongo.DESCENDING)], skip=(query_args.page - 1) * 25, limit=25
     )
@@ -825,6 +865,14 @@ async def kick_user(username):
     # Check permissions
     if not security.has_permission(request.permissions, security.AdminPermissions.KICK_USERS):
         abort(401)
+
+    # Make sure user isn't protected
+    if not security.has_permission(request.permissions, security.AdminPermissions.SYSADMIN):
+        account = db.usersv0.find_one(
+            {"_id": username}, projection={"flags": 1}
+        )
+        if account and (account["flags"] & security.UserFlags.PROTECTED) == security.UserFlags.PROTECTED:
+            abort(403)
 
     # Revoke tokens
     db.usersv0.update_one({"_id": username}, {"$set": {"tokens": []}})

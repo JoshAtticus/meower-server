@@ -42,7 +42,6 @@ async def internal_auth():
 
             request.internal_ip = request.headers.get("X-Internal-Ip")
             request.internal_username = request.headers.get("X-Internal-Username")
-            request.bypass_captcha = True
 
 
 @app.before_request
@@ -129,7 +128,7 @@ async def get_ulist():
         page = 1
 
     # Get online usernames
-    usernames = list(app.cl.usernames.keys())
+    usernames = app.cl.get_visible_usernames()
 
     # Get total pages
     pages = (len(usernames) // 25)
