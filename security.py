@@ -32,6 +32,7 @@ DEFAULT_USER_SETTINGS = {
     "bgm_song": 2,
     "debug": False,
     "hide_blocked_users": False,
+    "hide_presence": False,
     "active_dms": [],
     "favorited_chats": []
 }

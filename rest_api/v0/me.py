@@ -37,6 +37,7 @@ class UpdateConfigBody(BaseModel):
     bgm_song: Optional[int] = Field(default=None)
     debug: Optional[bool] = Field(default=None)
     hide_blocked_users: Optional[bool] = Field(default=None)
+    hide_presence: Optional[bool] = Field(default=None)
     favorited_chats: Optional[List[str]] = Field(default=None)
 
     class Config:
@@ -160,6 +161,14 @@ async def update_config(data: UpdateConfigBody):
 
     # Sync config between sessions
     app.cl.send_event("update_config", new_config, usernames=[request.user])
+
+    # Update presence visibility and broadcast the new ulist
+    if "hide_presence" in new_config:
+        if new_config["hide_presence"]:
+            app.cl.hidden_usernames.add(request.user)
+        else:
+            app.cl.hidden_usernames.discard(request.user)
+        app.cl.send_ulist()
 
     # Send updated pfp and quote to other clients
     updated_profile_data = {"_id": request.user}

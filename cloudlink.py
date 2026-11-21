@@ -65,6 +65,7 @@ class CloudlinkServer:
         }
         self.clients: set[CloudlinkClient] = set()
         self.usernames: dict[str, list[CloudlinkClient]] = {}  # {"username": [cl_client1, cl_client2, ...]}
+        self.hidden_usernames: set[str] = set()  # authenticated users hidden from the ulist
     
     async def client_handler(self, websocket: websockets.WebSocketServerProtocol):
         # Create CloudlinkClient
@@ -203,7 +204,10 @@ class CloudlinkServer:
         }, json.dumps(val))
 
     def get_ulist(self):
-        ulist = ";".join(self.usernames.keys())
+        ulist = ";".join(
+            username for username in self.usernames.keys()
+            if username not in self.hidden_usernames
+        )
         if ulist:
             ulist += ";"
         return ulist
@@ -271,6 +275,8 @@ class CloudlinkClient:
 
         # Authenticate
         self.username = account["_id"]
+        if account.get("hide_presence"):
+            self.server.hidden_usernames.add(self.username)
         if self.username in self.server.usernames:
             self.server.usernames[self.username].append(self)
         else:
@@ -298,6 +304,7 @@ class CloudlinkClient:
         self.server.usernames[self.username].remove(self)
         if len(self.server.usernames[self.username]) == 0:
             del self.server.usernames[self.username]
+            self.server.hidden_usernames.discard(self.username)
             self.server.send_ulist()
         self.username = None
 
