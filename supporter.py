@@ -1,6 +1,6 @@
 from threading import Thread
 from typing import Optional, Iterable, Any
-import uuid, time, msgpack, pymongo, re, copy
+import uuid, time, msgpack, pymongo, re, copy, secrets
 
 from cloudlink import CloudlinkServer
 from database import db, rdb
@@ -12,6 +12,22 @@ This module provides constant variables, and other miscellaneous supporter utili
 
 FILE_ID_REGEX = "[a-zA-Z0-9]{24}"
 CUSTOM_EMOJI_REGEX = f"<:({FILE_ID_REGEX})>"
+
+# Crockford base32 alphabet for ULIDs
+CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def ulid() -> str:
+    """
+    Generate a ULID (48-bit ms timestamp + 80-bit randomness, Crockford
+    base32). Unlike UUIDs, ULIDs sort lexicographically by creation time.
+    """
+    n = (int(time.time() * 1000) << 80) | secrets.randbits(80)
+    chars = []
+    for _ in range(26):
+        n, r = divmod(n, 32)
+        chars.append(CROCKFORD[r])
+    return "".join(reversed(chars))
 
 class Supporter:
     def __init__(self, cl: CloudlinkServer):
@@ -70,7 +86,7 @@ class Supporter:
         reply_to: list[str] = []
     ) -> tuple[bool, dict]:
         # Create post ID and get timestamp
-        post_id = str(uuid.uuid4())
+        post_id = ulid()
 
         # Make sure replied to posts exist
         for reply in reply_to:
