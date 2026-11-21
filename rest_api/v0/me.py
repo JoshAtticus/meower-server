@@ -26,7 +26,7 @@ class DeleteAccountBody(BaseModel):
 class UpdateConfigBody(BaseModel):
     pfp_data: Optional[int] = Field(default=None)
     avatar: Optional[str] = Field(default=None, max_length=24)
-    avatar_color: Optional[str] = Field(default=None, min_length=6, max_length=6)  # hex code without the #
+    avatar_color: Optional[str] = Field(default=None, pattern=r"^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")  # hex code without the #, RGBA supported
     quote: Optional[str] = Field(default=None, max_length=360)
     unread_inbox: Optional[bool] = Field(default=None)
     theme: Optional[str] = Field(default=None, min_length=1, max_length=256)

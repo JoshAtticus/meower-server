@@ -1,6 +1,6 @@
 from hashlib import sha256
 from typing import Optional
-import time, requests, uuid, secrets, bcrypt, msgpack
+import re, time, requests, uuid, secrets, bcrypt, msgpack
 
 from database import db, rdb
 from utils import log
@@ -283,7 +283,7 @@ def update_settings(username, newdata):
         updated_user_vals["pfp_data"] = newdata["pfp_data"]
     if "avatar" in newdata and isinstance(newdata["avatar"], str) and len(newdata["avatar"]) <= 24:
         updated_user_vals["avatar"] = newdata["avatar"]
-    if "avatar_color" in newdata and isinstance(newdata["avatar_color"], str) and len(newdata["avatar_color"]) == 6:
+    if "avatar_color" in newdata and isinstance(newdata["avatar_color"], str) and re.fullmatch(r"[0-9a-fA-F]{6}([0-9a-fA-F]{2})?", newdata["avatar_color"]):
         updated_user_vals["avatar_color"] = newdata["avatar_color"]
     
     # Update quote

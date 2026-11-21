@@ -18,7 +18,7 @@ class GetPostsQueryArgs(BaseModel):
 class ChatBody(BaseModel):
     nickname: str = Field(default=None, min_length=1, max_length=32)
     icon: str = Field(default=None, max_length=24)
-    icon_color: str = Field(default=None, min_length=6, max_length=6)  # hex code without the #
+    icon_color: str = Field(default=None, pattern=r"^[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$")  # hex code without the #, RGBA supported
     allow_pinning: bool = Field(default=None)
 
     class Config:
