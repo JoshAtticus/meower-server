@@ -23,7 +23,7 @@ def claim_file(file_id: str, bucket: str, uploader: str):
         raise FileAlreadyClaimedError
 
 def unclaim_file(file_id: str):
-    db.files.update_many(
+    db.files.update_one(
         {"_id": file_id},
         {"$set": {"claimed": False, "uploaded_at": 0}}
     )
