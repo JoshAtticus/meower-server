@@ -4,9 +4,10 @@ from pydantic import BaseModel, Field
 from typing import Optional
 from threading import Thread
 from copy import copy
-import pymongo, uuid, time, emoji, msgpack
+import pymongo, uuid, time, emoji, msgpack, re
 
 import security
+import supporter as supporter_module
 import chat_permissions
 from database import db, rdb, get_total_pages
 from uploads import claim_file, unclaim_file
@@ -209,8 +210,11 @@ async def update_post(query_args: PostIdQueryArgs, data: PostBody):
     # Update post
     post["edited_at"] = int(time.time())
     post["p"] = data.content
+    # custom emojis can be added or removed by an edit
+    post["emojis"] = list(set(re.findall(supporter_module.CUSTOM_EMOJI_REGEX, post["p"])))
     db.posts.update_one({"_id": query_args.id}, {"$set": {
         "p": post["p"],
+        "emojis": post["emojis"],
         "edited_at": post["edited_at"]
     }})
 

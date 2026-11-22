@@ -349,6 +349,14 @@ for chat in db.chats.find({"type": 0, "roles": {"$exists": False}}, projection={
     log(f"[Migrator] Adding roles to group chat {chat['_id']}")
     chat_permissions.ensure_roles(db.chats.find_one({"_id": chat["_id"]}))
 
+# Custom emojis: posts edited before edits refreshed their emoji list
+import re as _re
+_EMOJI_RE = r"<:([a-zA-Z0-9]{24})>"  # same as supporter.CUSTOM_EMOJI_REGEX
+for _post in db.posts.find({"p": {"$regex": "<:"}, "emojis": {"$size": 0}}, projection={"p": 1}):
+    _found = list(set(_re.findall(_EMOJI_RE, _post["p"])))
+    if _found:
+        db.posts.update_one({"_id": _post["_id"]}, {"$set": {"emojis": _found}})
+
 # Reactions permission: grant it to the Default role once per existing chat
 # (the marker keeps later edits to the permission from being overwritten)
 for chat in db.chats.find({"type": 0, "roles": {"$exists": True}, "reactions_perm_migrated": {"$ne": True}}, projection={"_id": 1}):
