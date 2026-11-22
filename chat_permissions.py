@@ -146,7 +146,7 @@ def ensure_roles(chat: dict) -> dict:
     chat["member_roles"] = member_roles
     chat["invites_enabled"] = True
     chat["allow_sharing"] = True
-    chat["share_context"] = True
+    chat["share_context"] = False
     chat.pop("allow_pinning", None)
 
     db.chats.update_one({"_id": chat["_id"]}, {
@@ -155,7 +155,7 @@ def ensure_roles(chat: dict) -> dict:
             "member_roles": member_roles,
             "invites_enabled": True,
             "allow_sharing": True,
-            "share_context": True,
+            "share_context": False,
             "reactions_perm_migrated": True,
             "perms_v2_migrated": True
         },
@@ -174,7 +174,8 @@ def purpose_defaults(purpose) -> tuple:
     roles = default_roles()
     invites_enabled = True
     allow_sharing = True
-    share_context = True
+    # Context is only shared by default in announcement chats
+    share_context = purpose == "announcements"
     default_role = next(role for role in roles if role["_id"] == "default")
     if purpose == "friends":
         # Everyone can customise the chat, manage emotes and pin

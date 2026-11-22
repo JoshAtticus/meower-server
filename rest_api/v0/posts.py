@@ -118,7 +118,7 @@ async def get_post_context(post_id, query_args: ContextQueryArgs):
             abort(404)
         if request.user not in chat["members"] and \
                 (chat.get("type") != 0 or not chat.get("allow_sharing", True) or
-                 not chat.get("share_context", True)):
+                 not chat.get("share_context", False)):
             abort(404)
 
     # Get surrounding posts (ULIDs sort by creation time)

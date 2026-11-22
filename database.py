@@ -382,7 +382,7 @@ for chat in db.chats.find(
     set_fields = {
         "perms_v2_migrated": True,
         "allow_sharing": True,
-        "share_context": True
+        "share_context": False
     }
     if default_idx is not None:
         perms = chat["roles"][default_idx].get("permissions", {})

@@ -255,7 +255,7 @@ async def update_chat(chat_id, data: ChatBody):
             required.add("toggle_invites")
         sharing_changed = \
             (data.allow_sharing is not None and data.allow_sharing != chat.get("allow_sharing", True)) or \
-            (data.share_context is not None and data.share_context != chat.get("share_context", True))
+            (data.share_context is not None and data.share_context != chat.get("share_context", False))
         if sharing_changed:
             required.add("change_settings")
         for perm in required:
@@ -307,7 +307,7 @@ async def update_chat(chat_id, data: ChatBody):
             if data.share_context is True and not new_allow:
                 return {"error": True, "type": "sharingDisabled"}, 400
             new_context = data.share_context if data.share_context is not None \
-                else chat.get("share_context", True)
+                else chat.get("share_context", False)
             if not new_allow:
                 new_context = False
             updated_vals["allow_sharing"] = new_allow
