@@ -253,6 +253,23 @@ class Supporter:
         include_revisions: bool = False
     ) -> Iterable[dict[str, Any]]:
         posts = list(posts)
+
+        # Reaction users (top 3 most recent per post+emoji, requester first)
+        reaction_users: dict[tuple[str, str], list[str]] = {}
+        reactor_docs = list(db.post_reactions.find({"_id.post_id": {
+            "$in": [post["_id"] for post in posts if post]
+        }}, projection={"_id": 1, "time": 1}))
+        for doc in reactor_docs:
+            reaction_users.setdefault(
+                (doc["_id"]["post_id"], doc["_id"]["emoji"]), []
+            ).append((doc.get("time") or 0, doc["_id"]["user"]))
+        for key in reaction_users:
+            users = [u for _, u in sorted(
+                reaction_users[key], key=lambda r: r[0], reverse=True)]
+            if requester in users:
+                users.insert(0, users.pop(users.index(requester)))
+            reaction_users[key] = users[:3]
+
         for post in posts:
             if post is None:
                 continue
@@ -319,7 +336,10 @@ class Supporter:
                     "post_id": post["_id"],
                     "emoji": reaction["emoji"],
                     "user": requester
-                }}, limit=1) > 0) if requester else False
+                }}, limit=1) > 0) if requester else False,
+                "users": reaction_users.get(
+                    (post["_id"], reaction["emoji"]), []
+                )
             }) for reaction in post.get("reactions", [])]
 
             # Revisions
