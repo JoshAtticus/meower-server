@@ -185,11 +185,8 @@ def purpose_defaults(purpose) -> tuple:
         invites_enabled = False
         allow_sharing = False
         share_context = False
-        # Members can chat but not react/share/edit
-        default_role["permissions"] = {
-            perm: True
-            for perm in ("send_messages", "delete_own_messages", "invite_members")
-        }
+        # Messages can't be shared out of the chat
+        default_role["permissions"].pop("share_posts", None)
     elif purpose in ("announcements", "emojis"):
         # Members can't post, but can still react/share/edit
         default_role["permissions"] = {
