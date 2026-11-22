@@ -141,7 +141,8 @@ def create_account(username: str, password: str, ip: str):
         "quote": "",
         "pswd": hash_password(password),
         "mfa_recovery_code": secrets.token_hex(5),
-        "tokens": [],
+        # tokens has a unique index; an empty array indexes as null and collides
+        "tokens": [f"pending:{secrets.token_urlsafe(TOKEN_BYTES)}"],
         "flags": 0,
         "permissions": 0,
         "ban": {
