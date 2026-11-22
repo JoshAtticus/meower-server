@@ -1542,8 +1542,8 @@ async def update_member_role(chat_id, username, role_id, assign: bool):
     if username == request.user and request.user != chat["owner"]:
         return insufficient_rank()
 
-    # Check hierarchy
-    if not chat_permissions.outranks(chat, request.user, username):
+    # Check hierarchy (the owner editing their own roles is allowed above)
+    if username != request.user and not chat_permissions.outranks(chat, request.user, username):
         return insufficient_rank()
 
     # The administrator role can only be assigned/unassigned by the owner
