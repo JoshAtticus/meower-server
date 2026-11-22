@@ -52,6 +52,7 @@ class UserFlags:
     PROTECTED = 4
     POST_RATELIMIT_BYPASS = 8
     ULTRA_HD_UPLOADS = 16  # joke flag
+    BOT = 32
 
 
 class AdminPermissions:
@@ -179,6 +180,36 @@ def create_account(username: str, password: str, ip: str):
         })
 
 
+def create_bot_account(username: str, owner: str) -> str:
+    """Create a bot account owned by `owner`. Returns the bot's token."""
+    token = secrets.token_urlsafe(TOKEN_BYTES)
+    db.usersv0.insert_one({
+        "_id": username,
+        "lower_username": username.lower(),
+        "uuid": str(uuid.uuid4()),
+        "created": int(time.time()),
+        "pfp_data": 1,
+        "avatar": "",
+        "avatar_color": "000000",
+        "quote": "",
+        "pswd": None,  # bots can never password-login
+        "mfa_recovery_code": secrets.token_hex(5),
+        "tokens": [token],
+        "flags": UserFlags.BOT,
+        "permissions": 0,
+        "ban": {
+            "state": "none",
+            "restrictions": 0,
+            "expires": 0,
+            "reason": ""
+        },
+        "last_seen": int(time.time()),
+        "delete_after": None
+    })
+    db.user_settings.insert_one({"_id": username})
+    return token
+
+
 def get_account(username, include_config=False):
     # Check datatype
     if not isinstance(username, str):
@@ -194,6 +225,13 @@ def get_account(username, include_config=False):
     for key in SENSITIVE_ACCOUNT_FIELDS:
         if key in account:
             del account[key]
+
+    # Add bot fields
+    account["bot"] = bool((account.get("flags") or 0) & UserFlags.BOT)
+    if account["bot"]:
+        bot = db.bots.find_one({"_id": account["_id"]}, projection={"owner": 1})
+        if bot:
+            account["bot_owner"] = bot["owner"]
 
     # Add lvl and banned
     account["lvl"] = 0
@@ -225,6 +263,7 @@ def create_user_token(username: str, ip: str, used_token: Optional[str] = None) 
     # Get required account details
     account = db.usersv0.find_one({"_id": username}, projection={
         "_id": 1,
+        "flags": 1,
         "tokens": 1,
         "delete_after": 1
     })
@@ -249,6 +288,13 @@ def create_user_token(username: str, ip: str, used_token: Optional[str] = None) 
     if used_token:
     	return used_token
     
+    # Bots keep a single token; don't mint extra ones on login
+    if (account.get("flags") or 0) & UserFlags.BOT and account["tokens"]:
+        db.usersv0.update_one({"_id": account["_id"]}, {"$set": {
+            "last_seen": int(time.time())
+        }})
+        return account["tokens"][0]
+
     # Generate new token, revoke used token, and update last seen timestamp
     new_token = secrets.token_urlsafe(TOKEN_BYTES)
     account["tokens"].append(new_token)
@@ -432,7 +478,8 @@ def delete_account(username, purge=False):
         "quote": None,
         "pswd": None,
         "mfa_recovery_code": None,
-        "tokens": None,
+        # tokens has a unique index, so use a unique (and unguessable) tombstone instead of None
+        "tokens": [f"deleted:{secrets.token_urlsafe(TOKEN_BYTES)}"],
         "flags": account["flags"],
         "permissions": None,
         "ban": None,
@@ -481,6 +528,12 @@ def delete_account(username, purge=False):
 
     # Delete posts
     db.posts.delete_many({"u": username})
+
+    # Delete owned bots
+    for bot in db.bots.find({"owner": username}, projection={"_id": 1}):
+        db.bots.delete_one({"_id": bot["_id"]})
+        if bot["_id"] != username:
+            delete_account(bot["_id"], purge=True)
 
     # Purge user
     if purge:

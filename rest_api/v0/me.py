@@ -71,6 +71,12 @@ class GetReportsQueryArgs(BaseModel):
     page: Optional[int] = Field(default=1, ge=1)
 
 
+def bot_guard():
+    """Bots can't use self-service account-management endpoints."""
+    if request.flags & security.UserFlags.BOT:
+        return {"error": True, "type": "botsCannotDoThis"}, 403
+
+
 @me_bp.get("/")
 async def get_me():
     # Check authorization
@@ -87,6 +93,9 @@ async def delete_account(data: DeleteAccountBody):
     # Check authorization
     if not request.user:
         abort(401)
+
+    if resp := bot_guard():
+        return resp
 
     # Check ratelimit
     if security.ratelimited(f"login:u:{request.user}"):
@@ -239,6 +248,9 @@ async def change_password(data: ChangePasswordBody):
     if not request.user:
         abort(401)
 
+    if resp := bot_guard():
+        return resp
+
     # Check ratelimit
     if security.ratelimited(f"login:u:{request.user}"):
         abort(429)
@@ -286,6 +298,9 @@ async def add_authenticator(data: AddAuthenticatorBody):
     # Check authorization
     if not request.user:
         abort(401)
+
+    if resp := bot_guard():
+        return resp
 
     # Validate
     if data.type == "totp" and data.totp_secret and data.totp_code:
@@ -335,6 +350,9 @@ async def update_authenticator(authenticator_id: str, data: UpdateAuthenticatorB
     if not request.user:
         abort(401)
 
+    if resp := bot_guard():
+        return resp
+
     # Get authenticator
     authenticator = db.authenticators.find_one({
         "_id": authenticator_id,
@@ -368,6 +386,9 @@ async def remove_authenticator(authenticator_id: str, data: RemoveAuthenticatorB
     if not request.user:
         abort(401)
 
+    if resp := bot_guard():
+        return resp
+
     # Check ratelimit
     if security.ratelimited(f"login:u:{request.user}"):
         abort(429)
@@ -398,6 +419,9 @@ async def get_new_totp_secret():
     if not request.user:
         abort(401)
 
+    if resp := bot_guard():
+        return resp
+
     # Create secret and provisioning URI
     secret = pyotp.random_base32()
     provisioning_uri = pyotp.TOTP(secret).provisioning_uri(name=request.user, issuer_name="Meower")
@@ -419,6 +443,9 @@ async def reset_mfa_recovery_code(data: ResetMFARecoveryCodeBody):
     # Check authorization
     if not request.user:
         abort(401)
+
+    if resp := bot_guard():
+        return resp
 
     # Check ratelimit
     if security.ratelimited(f"login:u:{request.user}"):
@@ -510,6 +537,9 @@ async def get_current_data_export():
     if not request.user:
         abort(401)
 
+    if resp := bot_guard():
+        return resp
+
     # Get current data export request from the database
     data_export = db.data_exports.find_one({
         "user": request.user,
@@ -537,6 +567,9 @@ async def download_data_export():
     if not request.user:
         abort(401)
 
+    if resp := bot_guard():
+        return resp
+
     data_export = db.data_exports.find_one({
         "user": request.user,
         "status": "completed",
@@ -558,6 +591,9 @@ async def request_data_export():
     # Check authorization
     if not request.user:
         abort(401)
+
+    if resp := bot_guard():
+        return resp
 
     # Make sure a current data export request doesn't already exist
     if db.data_exports.count_documents({

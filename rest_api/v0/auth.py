@@ -47,8 +47,12 @@ async def login(data: AuthRequest):
 
     # Check credentials
     if data.password not in account["tokens"]:
-        # Check password
-        password_valid = security.check_password_hash(data.password, account["pswd"])
+        # Check password (bots and passwordless accounts can never log in this way)
+        password_valid = (
+            account["pswd"] is not None
+            and not (account["flags"] & security.UserFlags.BOT)
+            and security.check_password_hash(data.password, account["pswd"])
+        )
 
         # Maybe they put their MFA credentials at the end of their password?
         if (not password_valid) and db.authenticators.count_documents({"user": account["_id"]}, limit=1):
