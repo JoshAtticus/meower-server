@@ -5,6 +5,22 @@ class FileNotFoundError(Exception): pass
 class FileAlreadyClaimedError(Exception): pass
 
 
+# Post attachments may only be images or videos. SVG is excluded (it can
+# carry scripts).
+_MEDIA_EXTENSIONS = {
+    "png", "jpg", "jpeg", "gif", "webp", "avif", "bmp",
+    "mp4", "webm", "mov", "m4v",
+}
+
+def file_is_media(file: dict) -> bool:
+    mime = (file or {}).get("mime") or ""
+    if mime:
+        return (mime.startswith("image/") or mime.startswith("video/")) \
+            and mime != "image/svg+xml"
+    filename = (file or {}).get("filename") or ""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return ext in _MEDIA_EXTENSIONS
+
 def claim_file(file_id: str, bucket: str, uploader: str):
     # Find file
     file = db.files.find_one()

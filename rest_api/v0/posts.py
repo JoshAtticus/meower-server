@@ -10,7 +10,7 @@ import security
 import supporter as supporter_module
 import chat_permissions
 from database import db, rdb, get_total_pages
-from uploads import claim_file, unclaim_file
+from uploads import claim_file, unclaim_file, file_is_media
 from utils import log
 
 
@@ -658,12 +658,15 @@ async def create_chat_post(chat_id, data: PostBody):
                 post_id not in unique_reply_to_post_ids:
                 unique_reply_to_post_ids.append(post_id)
 
-    # Claim attachments
+    # Claim attachments (images only)
     attachments = []
     if chat_id != "livechat":
         for attachment_id in data.attachments:
             if attachment_id in attachments:
                 continue
+            file = db.files.find_one({"_id": attachment_id, "bucket": "attachments", "uploaded_by": request.user})
+            if file and not file_is_media(file):
+                return {"error": True, "type": "mediaOnly"}, 400
             try:
                 claim_file(attachment_id, "attachments", request.user)
             except Exception as e:
