@@ -1,3 +1,4 @@
+import time
 from database import db
 
 
@@ -38,10 +39,11 @@ def claim_file(file_id: str, bucket: str, uploader: str):
     elif result.modified_count == 0:
         raise FileAlreadyClaimedError
 
-def unclaim_file(file_id: str):
+def unclaim_file(file_id: str, keep_days: int = 7):
+    # Keep deleted-post uploads for 7 days for moderation before expiry
     db.files.update_one(
         {"_id": file_id},
-        {"$set": {"claimed": False, "uploaded_at": 0}}
+        {"$set": {"claimed": False, "uploaded_at": int(time.time()) + keep_days * 86400}}
     )
 
 def unclaim_all_files(username: str):
