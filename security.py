@@ -1,6 +1,6 @@
 from hashlib import sha256
 from typing import Optional
-import time, requests, uuid, secrets, bcrypt, msgpack
+import time, requests, uuid, secrets, bcrypt, msgpack, os, hmac
 
 from database import db, rdb
 from utils import log
@@ -663,3 +663,28 @@ def hash_password(password: str) -> str:
 
 def check_password_hash(password: str, hashed_password: str) -> bool:
     return bcrypt.checkpw(password.encode(), hashed_password.encode())
+
+
+# Signed share tokens let non-members read shared group-chat posts
+_SHARE_SECRET = os.getenv("SHARE_SECRET")
+if _SHARE_SECRET:
+    _SHARE_SECRET = _SHARE_SECRET.encode()
+else:
+    _doc = db.config.find_one({"_id": "share_secret"})
+    if _doc:
+        _SHARE_SECRET = bytes.fromhex(_doc["value"])
+    else:
+        _hex = secrets.token_hex(32)
+        try:
+            db.config.insert_one({"_id": "share_secret", "value": _hex})
+        except Exception:
+            _hex = db.config.find_one({"_id": "share_secret"})["value"]
+        _SHARE_SECRET = bytes.fromhex(_hex)
+
+
+def share_token(post_id: str) -> str:
+    return hmac.new(_SHARE_SECRET, post_id.encode(), sha256).hexdigest()[:32]
+
+
+def valid_share_token(post_id: str, token) -> bool:
+    return bool(token) and hmac.compare_digest(share_token(post_id), str(token))

@@ -44,9 +44,11 @@ def post_event_recipients(post: dict) -> Optional[list[str]]:
 
 class PostIdQueryArgs(BaseModel):
     id: str = Field()
+    s: Optional[str] = Field(default=None)
 
 class ContextQueryArgs(BaseModel):
     limit: Optional[int] = Field(default=5, ge=1, le=10)
+    s: Optional[str] = Field(default=None)
 
 class PagedQueryArgs(BaseModel):
     page: Optional[int] = Field(default=1, ge=1)
@@ -90,7 +92,8 @@ async def get_post(query_args: PostIdQueryArgs):
         if not chat:
             abort(404)
         if request.user not in chat["members"] and \
-                (chat.get("type") != 0 or not chat.get("allow_sharing", True)):
+                (chat.get("type") != 0 or not chat.get("allow_sharing", True) or
+                 not security.valid_share_token(post["_id"], query_args.s)):
             abort(404)
 
     # Return post
@@ -118,7 +121,8 @@ async def get_post_context(post_id, query_args: ContextQueryArgs):
             abort(404)
         if request.user not in chat["members"] and \
                 (chat.get("type") != 0 or not chat.get("allow_sharing", True) or
-                 not chat.get("share_context", False)):
+                 not chat.get("share_context", False) or
+                 not security.valid_share_token(post["_id"], query_args.s)):
             abort(404)
 
     # Get surrounding posts (ULIDs sort by creation time)
@@ -145,6 +149,45 @@ async def get_post_context(post_id, query_args: ContextQueryArgs):
         "before": app.supporter.parse_posts_v0(before, requester=request.user),
         "after": app.supporter.parse_posts_v0(after, requester=request.user)
     }, 200
+
+
+@posts_bp.get("/<post_id>/share")
+async def get_post_share_token(post_id: str):
+    # Check authorization
+    if not request.user:
+        abort(401)
+
+    # Check ratelimit
+    if security.ratelimited(f"share:{request.user}"):
+        abort(429)
+
+    # Ratelimit
+    security.ratelimit(f"share:{request.user}", 30, 60)
+
+    # Get post
+    post = db.posts.find_one({"_id": post_id, "isDeleted": False})
+    if not post:
+        abort(404)
+
+    # Home posts are public already — no token needed
+    if post["post_origin"] in ("home", "livechat"):
+        return {"error": False, "token": None}, 200
+    if post["post_origin"] == "inbox":
+        abort(404)
+
+    # Chat posts: members only; group chats need the share_posts permission
+    chat = db.chats.find_one({
+        "_id": post["post_origin"],
+        "deleted": False
+    })
+    if not chat or request.user not in chat["members"]:
+        abort(404)
+    if chat["type"] == 1:
+        return {"error": True, "type": "sharingUnavailable"}, 403
+    if not chat_permissions.has(chat_permissions.ensure_roles(chat), request.user, "share_posts"):
+        return {"error": True, "type": "missingPermission"}, 403
+
+    return {"error": False, "token": security.share_token(post_id)}, 200
 
 
 @posts_bp.patch("/")
