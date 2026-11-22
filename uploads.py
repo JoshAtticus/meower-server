@@ -29,7 +29,7 @@ def unclaim_file(file_id: str):
     )
 
 def unclaim_all_files(username: str):
-    db.files.update_one(
+    db.files.update_many(
         {"uploaded_by": username},
         {"$set": {"claimed": False, "uploaded_at": 0}}
     )
