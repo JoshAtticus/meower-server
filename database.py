@@ -357,6 +357,9 @@ for _post in db.posts.find({"p": {"$regex": "<:"}, "emojis": {"$size": 0}}, proj
     if _found:
         db.posts.update_one({"_id": _post["_id"]}, {"$set": {"emojis": _found}})
 
+# The Profile theme replaced the profile_theme toggle
+db.user_settings.update_many({"profile_theme": True}, {"$set": {"theme": "profile", "profile_theme": False}})
+
 # Reactions permission: grant it to the Default role once per existing chat
 # (the marker keeps later edits to the permission from being overwritten)
 for chat in db.chats.find({"type": 0, "roles": {"$exists": True}, "reactions_perm_migrated": {"$ne": True}}, projection={"_id": 1}):
