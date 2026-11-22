@@ -83,13 +83,16 @@ async def get_post(query_args: PostIdQueryArgs):
     if (post["post_origin"] == "inbox") and (post["u"] not in ["Server", request.user]):
         abort(404)
     elif post["post_origin"] not in ["home", "inbox"]:
-        if not db.chats.count_documents({
+        chat = db.chats.find_one({
             "_id": post["post_origin"],
-            "members": request.user,
             "deleted": False
-        }, limit=1):
+        }, projection={"members": 1, "type": 1, "allow_sharing": 1})
+        if not chat:
             abort(404)
-    
+        if request.user not in chat["members"] and \
+                (chat.get("type") != 0 or not chat.get("allow_sharing", True)):
+            abort(404)
+
     # Return post
     post["error"] = False
     return app.supporter.parse_posts_v0([post], requester=request.user)[0], 200
@@ -107,11 +110,15 @@ async def get_post_context(post_id, query_args: ContextQueryArgs):
     if (post["post_origin"] == "inbox") and (post["u"] not in ["Server", request.user]):
         abort(404)
     elif post["post_origin"] not in ["home", "inbox"]:
-        if not db.chats.count_documents({
+        chat = db.chats.find_one({
             "_id": post["post_origin"],
-            "members": request.user,
             "deleted": False
-        }, limit=1):
+        }, projection={"members": 1, "type": 1, "allow_sharing": 1, "share_context": 1})
+        if not chat:
+            abort(404)
+        if request.user not in chat["members"] and \
+                (chat.get("type") != 0 or not chat.get("allow_sharing", True) or
+                 not chat.get("share_context", True)):
             abort(404)
 
     # Get surrounding posts (ULIDs sort by creation time)
@@ -182,6 +189,11 @@ async def update_post(query_args: PostIdQueryArgs, data: PostBody):
         return {"error": True, "type": "accountBanned"}, 403
     elif post["post_origin"] != "home" and security.is_restricted(request.user, security.Restrictions.CHAT_POSTS):
         return {"error": True, "type": "accountBanned"}, 403
+
+    # Group chats can gate editing your own messages
+    if post["post_origin"] not in ["home", "inbox"] and chat["type"] == 0:
+        if not chat_permissions.has(chat_permissions.ensure_roles(chat), request.user, "edit_messages"):
+            return {"error": True, "type": "missingPermission"}, 403
 
     # Can't edit the message that makes up a pending DM request
     if post["post_origin"] not in ["home", "inbox"] and chat["type"] == 1:
@@ -798,8 +810,17 @@ async def add_post_reaction(post_id: str, emoji_reaction: str):
         })
         if not chat:
             abort(404)
-        if chat["type"] == 0 and not chat_permissions.has(chat_permissions.ensure_roles(chat), request.user, "add_reactions"):
-            return {"error": True, "type": "missingPermission"}, 403
+        if chat["type"] == 0:
+            chat = chat_permissions.ensure_roles(chat)
+            # Joining an existing reaction needs `react`; adding an emoji the
+            # post doesn't have yet needs `add_reactions`
+            already_used = any(
+                reaction["emoji"] == emoji_reaction
+                for reaction in post.get("reactions", [])
+            )
+            if not chat_permissions.has(chat, request.user,
+                                        "react" if already_used else "add_reactions"):
+                return {"error": True, "type": "missingPermission"}, 403
 
     # Make sure there's not too many reactions (50)
     if len(post["reactions"]) >= 50:

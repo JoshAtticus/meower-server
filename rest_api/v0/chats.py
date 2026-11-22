@@ -23,6 +23,8 @@ class ChatBody(BaseModel):
     announce_deletes: bool = Field(default=None)
     announce_deleter: bool = Field(default=None)
     invites_enabled: bool = Field(default=None)
+    allow_sharing: bool = Field(default=None)
+    share_context: bool = Field(default=None)
     purpose: Optional[Literal["friends", "public", "private", "announcements", "emojis", "other"]] = Field(default=None)
 
     class Config:
@@ -31,14 +33,16 @@ class ChatBody(BaseModel):
 
 class RoleBody(BaseModel):
     name: str = Field(min_length=1, max_length=32)
-    tier: int = Field(ge=0, le=3)
+    tier: int = Field(ge=-1, le=3)
     permissions: dict[str, bool] = Field(default_factory=dict)
+    display_override: bool = Field(default=False)
     colors: Optional[list[str]] = Field(default=None)
 
 class RolePatchBody(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=32)
-    tier: Optional[int] = Field(default=None)
+    tier: Optional[int] = Field(default=None, ge=-1, le=4)
     permissions: Optional[dict[str, Optional[bool]]] = Field(default=None)
+    display_override: Optional[bool] = Field(default=None)
     colors: Optional[list[str]] = Field(default=None)
 
 
@@ -134,7 +138,8 @@ async def create_chat(data: ChatBody):
         data.icon = ""
     if data.icon_color is None:
         data.icon_color = "000000"
-    roles, invites_enabled = chat_permissions.purpose_defaults(data.purpose)
+    roles, invites_enabled, allow_sharing, share_context = \
+        chat_permissions.purpose_defaults(data.purpose)
     chat = {
         "_id": str(uuid.uuid4()),
         "type": 0,
@@ -151,7 +156,10 @@ async def create_chat(data: ChatBody):
         "roles": roles,
         "member_roles": {request.user: ["default", "administrator"]},
         "invites_enabled": invites_enabled,
+        "allow_sharing": allow_sharing,
+        "share_context": share_context,
         "reactions_perm_migrated": True,
+        "perms_v2_migrated": True,
         "bans": []
     }
     db.chats.insert_one(chat)
@@ -245,6 +253,11 @@ async def update_chat(chat_id, data: ChatBody):
             required.add("change_settings")
         if data.invites_enabled is not None and data.invites_enabled != chat.get("invites_enabled", True):
             required.add("toggle_invites")
+        sharing_changed = \
+            (data.allow_sharing is not None and data.allow_sharing != chat.get("allow_sharing", True)) or \
+            (data.share_context is not None and data.share_context != chat.get("share_context", True))
+        if sharing_changed:
+            required.add("change_settings")
         for perm in required:
             if not chat_permissions.has(chat, request.user, perm):
                 return missing_permission()
@@ -288,7 +301,18 @@ async def update_chat(chat_id, data: ChatBody):
             updated_vals["announce_deleter"] = data.announce_deleter
         if data.invites_enabled is not None:
             updated_vals["invites_enabled"] = data.invites_enabled
-    
+        if data.allow_sharing is not None or data.share_context is not None:
+            new_allow = data.allow_sharing if data.allow_sharing is not None \
+                else chat.get("allow_sharing", True)
+            if data.share_context is True and not new_allow:
+                return {"error": True, "type": "sharingDisabled"}, 400
+            new_context = data.share_context if data.share_context is not None \
+                else chat.get("share_context", True)
+            if not new_allow:
+                new_context = False
+            updated_vals["allow_sharing"] = new_allow
+            updated_vals["share_context"] = new_context
+
     # Update chat
     db.chats.update_one({"_id": chat_id}, {"$set": updated_vals})
 
@@ -1336,15 +1360,22 @@ async def create_chat_role(chat_id, data: RoleBody):
     if colors is None:
         return {"error": True, "type": "badColors"}, 400
 
-    # Validate permissions
+    # display_override is only meaningful on cosmetic (tier -1) roles
+    if data.display_override and data.tier != -1:
+        return {"error": True, "type": "notCosmetic"}, 400
+
+    # Validate permissions (cosmetic roles can't hold any)
     role = {
         "_id": chat_permissions.new_role_id(),
         "name": data.name,
         "tier": data.tier,
         "permissions": {},
+        "display_override": bool(data.display_override),
         "colors": colors,
         "preset": False
     }
+    if data.tier == -1:
+        data.permissions = {}
     for perm, val in data.permissions.items():
         if perm not in chat_permissions.PERMISSIONS:
             return {"error": True, "type": "unknownPermission"}, 400
@@ -1371,14 +1402,14 @@ async def create_chat_role(chat_id, data: RoleBody):
 async def update_chat_role(chat_id, role_id, data: RolePatchBody):
     chat = await get_group_chat_for_roles(chat_id)
 
-    # Tier is immutable
-    if data.tier is not None:
-        abort(400)
-
     # Get role
     role = get_role(chat, role_id)
     if not role:
         abort(404)
+
+    # The administrator role's tier can never change
+    if data.tier is not None and role["_id"] == "administrator":
+        return {"error": True, "type": "tierLocked"}, 400
 
     # Validate colours
     colors = None
@@ -1390,21 +1421,35 @@ async def update_chat_role(chat_id, role_id, data: RolePatchBody):
     # Check modify_roles permission. The administrator role can't be edited,
     # except that the owner may change its (purely cosmetic) colours.
     if role["_id"] == "administrator":
-        if request.user != chat["owner"] or data.name is not None or data.permissions or colors is None:
+        if request.user != chat["owner"] or data.name is not None or data.permissions or \
+                data.display_override is not None or colors is None:
             return missing_permission()
     elif not chat_permissions.has(chat, request.user, "modify_roles") or \
             not chat_permissions.can_manage_role(chat, request.user, role):
         return missing_permission()
 
-    # Validate permission changes
+    # Changing the tier requires managing the role at its current tier (done
+    # above) and at the new tier: only the owner may set any tier, everyone
+    # else needs the new tier below their own rank
+    if data.tier is not None and data.tier != role["tier"] and \
+            request.user != chat["owner"] and \
+            data.tier >= chat_permissions.rank(chat, request.user):
+        return missing_permission()
+
+    # display_override is only meaningful on cosmetic (tier -1) roles
+    new_tier = data.tier if data.tier is not None else role["tier"]
+    if data.display_override is True and new_tier != -1:
+        return {"error": True, "type": "notCosmetic"}, 400
+
+    # Validate permission changes (cosmetic roles can never hold permissions)
     new_permissions = dict(role["permissions"])
-    if data.permissions:
+    if data.permissions and new_tier != -1:
         for perm, val in data.permissions.items():
             if perm not in chat_permissions.PERMISSIONS:
                 return {"error": True, "type": "unknownPermission"}, 400
             if role["permissions"].get(perm) == val:
                 continue
-            if val is True and chat_permissions.PERMISSIONS[perm] > role["tier"]:
+            if val is True and chat_permissions.PERMISSIONS[perm] > new_tier:
                 return {"error": True, "type": "permissionAboveRoleTier"}, 400
             if not chat_permissions.can_grant_perm(chat, request.user, perm):
                 return missing_permission()
@@ -1413,9 +1458,27 @@ async def update_chat_role(chat_id, role_id, data: RolePatchBody):
             else:
                 new_permissions[perm] = val
 
+    # Apply a tier change
+    if data.tier is not None and data.tier != role["tier"]:
+        if data.tier == -1 or role["tier"] == -1:
+            # Becoming cosmetic strips permissions; leaving cosmetic resets
+            # permissions and the display override
+            new_permissions = {}
+            if role["tier"] == -1:
+                role["display_override"] = False
+        elif data.tier < role["tier"]:
+            # Dropping tiers loses allows for perms above the new tier
+            new_permissions = {
+                perm: val for perm, val in new_permissions.items()
+                if not (val is True and chat_permissions.PERMISSIONS[perm] > data.tier)
+            }
+        role["tier"] = data.tier
+
     # Update role
     if data.name is not None:
         role["name"] = data.name
+    if data.display_override is not None:
+        role["display_override"] = data.display_override
     if colors is not None:
         role["colors"] = colors
     role["permissions"] = new_permissions

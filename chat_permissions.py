@@ -17,6 +17,9 @@ PERMISSIONS = {
     "pin_messages": 0,
     "unpin_messages": 0,
     "add_reactions": 0,
+    "share_posts": 0,
+    "react": 0,
+    "edit_messages": 0,
     "delete_others_messages": 1,
     "remove_members": 1,
     "ban_members": 2,
@@ -32,7 +35,7 @@ ADMIN_TIER = 4
 
 # (id, name, tier, granted permissions)
 PRESET_ROLES = [
-    ("default", "Default", 0, ["send_messages", "delete_own_messages", "invite_members", "add_reactions"]),
+    ("default", "Default", 0, ["send_messages", "delete_own_messages", "invite_members", "add_reactions", "share_posts", "react", "edit_messages"]),
     ("stickerer", "Stickerer", 0, ["add_emotes", "edit_emotes", "delete_emotes"]),
     ("customiser", "Customiser", 0, ["change_color", "change_name", "change_icon", "delete_icon"]),
     ("pinner", "Pinner", 0, ["pin_messages", "unpin_messages"]),
@@ -64,10 +67,13 @@ def _roles_by_id(chat: dict) -> dict:
 def role_effective(chat: dict, role: dict) -> set:
     if role["tier"] >= ADMIN_TIER:
         return set(PERMISSIONS)
+    if role["tier"] < 0:
+        # Cosmetic roles grant no permissions
+        return set()
     effective = set()
-    # Inherit explicit allows from every lower-tier role
+    # Inherit explicit allows from every lower-tier role (never cosmetic ones)
     for other in chat.get("roles", []):
-        if other["tier"] < role["tier"]:
+        if 0 <= other["tier"] < role["tier"]:
             effective.update(perm for perm, val in other["permissions"].items() if val is True)
     # Apply this role's own overrides
     effective.update(perm for perm, val in role["permissions"].items() if val is True)
@@ -139,6 +145,8 @@ def ensure_roles(chat: dict) -> dict:
         member_roles[member] = roles
     chat["member_roles"] = member_roles
     chat["invites_enabled"] = True
+    chat["allow_sharing"] = True
+    chat["share_context"] = True
     chat.pop("allow_pinning", None)
 
     db.chats.update_one({"_id": chat["_id"]}, {
@@ -146,7 +154,10 @@ def ensure_roles(chat: dict) -> dict:
             "roles": chat["roles"],
             "member_roles": member_roles,
             "invites_enabled": True,
-            "reactions_perm_migrated": True
+            "allow_sharing": True,
+            "share_context": True,
+            "reactions_perm_migrated": True,
+            "perms_v2_migrated": True
         },
         "$unset": {"allow_pinning": ""}
     })
@@ -158,9 +169,12 @@ CHAT_PURPOSES = ["friends", "public", "private", "announcements", "emojis", "oth
 
 
 def purpose_defaults(purpose) -> tuple:
-    """Return (roles, invites_enabled) for a new group chat's purpose."""
+    """Return (roles, invites_enabled, allow_sharing, share_context) for a new
+    group chat's purpose."""
     roles = default_roles()
     invites_enabled = True
+    allow_sharing = True
+    share_context = True
     default_role = next(role for role in roles if role["_id"] == "default")
     if purpose == "friends":
         # Everyone can customise the chat, manage emotes and pin
@@ -169,7 +183,17 @@ def purpose_defaults(purpose) -> tuple:
                 default_role["permissions"][perm] = True
     elif purpose == "private":
         invites_enabled = False
+        allow_sharing = False
+        share_context = False
+        # Members can chat but not react/share/edit
+        default_role["permissions"] = {
+            perm: True
+            for perm in ("send_messages", "delete_own_messages", "invite_members")
+        }
     elif purpose in ("announcements", "emojis"):
-        # Members can't post, but can still react
-        default_role["permissions"] = {"add_reactions": True}
-    return roles, invites_enabled
+        # Members can't post, but can still react/share/edit
+        default_role["permissions"] = {
+            perm: True
+            for perm in ("add_reactions", "react", "share_posts", "edit_messages")
+        }
+    return roles, invites_enabled, allow_sharing, share_context

@@ -370,4 +370,25 @@ for chat in db.chats.find({"type": 0, "roles": {"$exists": True}, "reactions_per
     )
     db.chats.update_one({"_id": chat["_id"]}, {"$set": {"reactions_perm_migrated": True}})
 
+# Sharing perms + settings: grant share_posts/react/edit_messages to the
+# Default role (unless already explicitly set) and default the sharing
+# toggles on for every existing group chat
+for chat in db.chats.find(
+        {"type": 0, "roles": {"$exists": True}, "perms_v2_migrated": {"$ne": True}},
+        projection={"_id": 1, "roles": 1}):
+    log(f"[Migrator] Adding sharing permissions to group chat {chat['_id']}")
+    default_idx = next(
+        (i for i, r in enumerate(chat["roles"]) if r["_id"] == "default"), None)
+    set_fields = {
+        "perms_v2_migrated": True,
+        "allow_sharing": True,
+        "share_context": True
+    }
+    if default_idx is not None:
+        perms = chat["roles"][default_idx].get("permissions", {})
+        for perm in ("share_posts", "react", "edit_messages"):
+            if perm not in perms:
+                set_fields[f"roles.{default_idx}.permissions.{perm}"] = True
+    db.chats.update_one({"_id": chat["_id"]}, {"$set": set_fields})
+
 print("") # finished startup logs
