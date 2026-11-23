@@ -328,6 +328,22 @@ async def change_username(data: ChangeUsernameBody):
     for client in list(app.cl.usernames.get(old, [])):
         client.kick()
 
+    # Tell everyone who shares a chat or relationship with the account, so open
+    # pages switch to the new name instead of showing the old one as offline
+    for chat in db.chats.find({"members": data.username, "deleted": False}, projection={"members": 1, "owner": 1, "member_roles": 1, "type": 1, "dm_request": 1}):
+        payload = {"_id": chat["_id"], "members": chat["members"]}
+        if chat.get("type") == 0:
+            payload["owner"] = chat.get("owner")
+            payload["member_roles"] = chat.get("member_roles", {})
+        if chat.get("dm_request"):
+            payload["dm_request"] = chat["dm_request"]
+        app.cl.send_event("update_chat", payload, usernames=[m for m in chat["members"] if m != data.username])
+    related = set()
+    for rel in db.relationships.find({"$or": [{"_id.from": data.username}, {"_id.to": data.username}]}):
+        related.add(rel["_id"]["to"] if rel["_id"]["from"] == data.username else rel["_id"]["from"])
+    if related:
+        app.cl.send_event("update_friends", {}, usernames=list(related))
+
     app.supporter.create_post("inbox", data.username, f"Your username was changed from @{old} to @{data.username}. If this wasn't you, please secure your account immediately.", category="security")
 
     return {"error": False, "username": data.username}, 200
