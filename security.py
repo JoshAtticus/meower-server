@@ -162,7 +162,7 @@ def create_account(username: str, password: str, ip: str):
         "op": "alert_user",
         "user": username,
         "category": "account",
-        "content": "Welcome to Meower! We welcome you with open arms! You can get started by making friends in the global chat or home, or by searching for people and adding them to a group chat. We hope you have fun!"
+        "content": "Welcome to Meower2! We welcome you with open arms! You can get started by customising your profile, chatting in home, and adding some friends! We hope you have fun!"
     }))
 
     # Automatically report if VPN is detected
