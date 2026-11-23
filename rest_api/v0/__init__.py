@@ -11,6 +11,7 @@ from .me import me_bp
 from .emojis import emojis_bp
 from .invites import invites_bp
 from .bots import bots_bp
+from .explore import explore_bp
 
 v0 = Blueprint("v0", __name__)
 
@@ -25,3 +26,4 @@ v0.register_blueprint(invites_bp)
 v0.register_blueprint(search_bp)
 v0.register_blueprint(emojis_bp)
 v0.register_blueprint(bots_bp)
+v0.register_blueprint(explore_bp)

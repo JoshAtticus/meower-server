@@ -26,6 +26,7 @@ class ChatBody(BaseModel):
     allow_sharing: bool = Field(default=None)
     share_context: bool = Field(default=None)
     purpose: Optional[Literal["friends", "public", "private", "announcements", "emojis", "other"]] = Field(default=None)
+    mode: Optional[Literal["chat", "feed"]] = Field(default=None)
 
     class Config:
         validate_assignment = True
@@ -160,6 +161,7 @@ async def create_chat(data: ChatBody):
         "share_context": share_context,
         "reactions_perm_migrated": True,
         "perms_v2_migrated": True,
+        "mode": data.mode or ("feed" if data.purpose in ("announcements", "emojis") else "chat"),
         "bans": []
     }
     db.chats.insert_one(chat)
@@ -258,9 +260,13 @@ async def update_chat(chat_id, data: ChatBody):
             (data.share_context is not None and data.share_context != chat.get("share_context", False))
         if sharing_changed:
             required.add("change_settings")
+        if data.mode is not None and data.mode != chat.get("mode", "chat"):
+            required.add("change_settings")
         for perm in required:
             if not chat_permissions.has(chat, request.user, perm):
                 return missing_permission()
+    elif data.mode is not None and data.mode != "chat":
+        return {"error": True, "type": "invalidMode"}, 400
     elif chat["owner"] != request.user:
         abort(403)
 
@@ -314,6 +320,9 @@ async def update_chat(chat_id, data: ChatBody):
             updated_vals["share_context"] = new_context
 
     # Update chat
+    if chat["type"] == 0 and data.mode is not None and data.mode != chat.get("mode", "chat"):
+        updated_vals["mode"] = data.mode
+
     db.chats.update_one({"_id": chat_id}, {"$set": updated_vals})
 
     # Send update chat event

@@ -120,7 +120,10 @@ class Supporter:
             "reply_to": reply_to,
             "reactions": [],
             "emojis": list(set(re.findall(CUSTOM_EMOJI_REGEX, content))),
-            "stickers": stickers
+            "stickers": stickers,
+            "like_count": 0,
+            "reaction_count": 0,
+            "reply_count": 0
         }
         if origin == "inbox" and category:
             post["inbox_category"] = category
@@ -128,6 +131,11 @@ class Supporter:
         # Add database item
         if origin != "livechat":
             db.posts.insert_one(post)
+            if reply_to:
+                db.posts.update_many(
+                    {"_id": {"$in": reply_to}},
+                    {"$inc": {"reply_count": 1}}
+                )
 
         # Send to files automod if there are attachments
         if len(attachments):
@@ -279,6 +287,7 @@ class Supporter:
 
             # Stupid legacy stuff
             post.update({
+                "reply_count": post.get("reply_count", 0),
                 "type": 2 if post["post_origin"] == "inbox" else 1,
                 "category": post.pop("inbox_category", None) if post["post_origin"] == "inbox" else post.get("category"),
                 "post_id": post["_id"]

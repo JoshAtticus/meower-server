@@ -115,6 +115,23 @@ try:
     ], name="pinned_posts", partialFilterExpression={"pinned": True})
 except: pass
 
+try:
+    db.posts.create_index([("reply_to", pymongo.ASCENDING)], name="reply_to")
+except: pass
+try:
+    db.posts.create_index([
+        ("post_origin", pymongo.ASCENDING),
+        ("t.e", pymongo.DESCENDING)
+    ], name="origin_time")
+except: pass
+try:
+    db.posts.create_index([
+        ("post_origin", pymongo.ASCENDING),
+        ("isDeleted", pymongo.ASCENDING),
+        ("like_count", pymongo.DESCENDING)
+    ], name="explore")
+except: pass
+
 # Create post revisions indexes
 try:
     db.post_revisions.create_index([
@@ -412,5 +429,46 @@ if not db.config.find_one({"_id": "inbox_categories_migrated"}):
         if _cat:
             db.posts.update_one({"_id": _post["_id"]}, {"$set": {"inbox_category": _cat}})
     db.config.update_one({"_id": "inbox_categories_migrated"}, {"$set": {"done": True}}, upsert=True)
+
+# Backfill like_count / reaction_count / reply_count on posts
+if not db.config.find_one({"_id": "post_counters_migrated"}):
+    log("Migrating post counters (likes, reactions, replies)...")
+    counters = {}  # post_id -> [likes, reactions, replies]
+    for reaction in db.post_reactions.find({}, projection={"_id": 1}):
+        rid = reaction["_id"]
+        c = counters.setdefault(rid["post_id"], [0, 0, 0])
+        if rid["emoji"] in ("❤️", "❤"):
+            c[0] += 1
+        else:
+            c[1] += 1
+    for reply in db.posts.find({"isDeleted": False, "reply_to.0": {"$exists": True}},
+                               projection={"reply_to": 1}):
+        for parent_id in reply["reply_to"]:
+            counters.setdefault(parent_id, [0, 0, 0])[2] += 1
+    for post_id, (likes, reactions, replies) in counters.items():
+        db.posts.update_one({"_id": post_id}, {"$set": {
+            "like_count": likes,
+            "reaction_count": reactions,
+            "reply_count": replies
+        }})
+    db.posts.update_many(
+        {"_id": {"$nin": list(counters.keys())},
+         "$or": [{"like_count": {"$exists": False}},
+                 {"reaction_count": {"$exists": False}},
+                 {"reply_count": {"$exists": False}}]},
+        {"$set": {"like_count": 0, "reaction_count": 0, "reply_count": 0}})
+    db.config.update_one({"_id": "post_counters_migrated"}, {"$set": {"done": True}}, upsert=True)
+
+# Set mode:"chat" on existing chats
+if not db.config.find_one({"_id": "chat_mode_migrated"}):
+    db.chats.update_many({"mode": {"$exists": False}}, {"$set": {"mode": "chat"}})
+    db.config.update_one({"_id": "chat_mode_migrated"}, {"$set": {"done": True}}, upsert=True)
+
+# Grant reply_to_posts on the default role of existing group chats
+if not db.config.find_one({"_id": "reply_to_posts_migrated"}):
+    db.chats.update_many(
+        {"type": 0, "roles._id": "default"},
+        {"$set": {"roles.$.permissions.reply_to_posts": True}})
+    db.config.update_one({"_id": "reply_to_posts_migrated"}, {"$set": {"done": True}}, upsert=True)
 
 print("") # finished startup logs

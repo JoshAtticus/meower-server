@@ -17,6 +17,9 @@ from utils import log
 posts_bp = Blueprint("posts_bp", __name__, url_prefix="/posts")
 
 
+LIKE_EMOJIS = ("❤️", "❤")
+
+
 def can_view_post(post: dict) -> bool:
     if post["post_origin"] == "inbox":
         return post["u"] in ["Server", request.user]
@@ -561,6 +564,12 @@ async def delete_post(query_args: PostIdQueryArgs):
         "isDeleted": True,
         "deleted_at": int(time.time())
     }})
+    if post.get("reply_to"):
+        db.posts.update_many({"_id": {"$in": post["reply_to"]}},
+                             {"$inc": {"reply_count": -1}})
+        db.posts.update_many({"_id": {"$in": post["reply_to"]},
+                              "reply_count": {"$lt": 0}},
+                             {"$set": {"reply_count": 0}})
 
     # Send delete post event
     app.cl.send_event("delete_post", {
@@ -687,7 +696,7 @@ async def create_chat_post(chat_id, data: PostBody):
             "members": request.user,
             "deleted": False
         }, projection={"type": 1, "members": 1, "bans": 1, "dm_request": 1,
-                       "owner": 1, "roles": 1, "member_roles": 1})
+                       "owner": 1, "roles": 1, "member_roles": 1, "mode": 1})
         if not chat:
             abort(404)
 
@@ -699,7 +708,11 @@ async def create_chat_post(chat_id, data: PostBody):
         # Group chats require permission to send messages
         if chat["type"] == 0:
             chat = chat_permissions.ensure_roles(chat)
-            if not chat_permissions.has(chat, request.user, "send_messages"):
+            if chat.get("mode") == "feed" and unique_reply_to_post_ids:
+                if not (chat_permissions.has(chat, request.user, "reply_to_posts")
+                        or chat_permissions.has(chat, request.user, "send_messages")):
+                    return {"error": True, "type": "missingPermission"}, 403
+            elif not chat_permissions.has(chat, request.user, "send_messages"):
                 return {"error": True, "type": "missingPermission"}, 403
 
         # DM stuff
@@ -780,6 +793,43 @@ async def create_chat_post(chat_id, data: PostBody):
     # Return new post
     post["error"] = False
     return app.supporter.parse_posts_v0([post], requester=request.user)[0], 200
+
+@posts_bp.get("/<post_id>/replies")
+@validate_querystring(PagedQueryArgs)
+async def get_post_replies(post_id: str, query_args: PagedQueryArgs):
+    # Get parent post
+    post = db.posts.find_one({"_id": post_id, "isDeleted": False})
+    if not post or not can_view_post(post):
+        abort(404)
+
+    # Share-token outsiders may view the post but may not list replies
+    if post["post_origin"] not in ["home", "inbox"]:
+        if not request.user or not db.chats.count_documents({
+            "_id": post["post_origin"],
+            "members": request.user,
+            "deleted": False
+        }, limit=1):
+            abort(404)
+
+    # Get replies (oldest first), same origin only
+    query = {
+        "reply_to": post_id,
+        "post_origin": post["post_origin"],
+        "isDeleted": False
+    }
+    posts = db.posts.find(
+        query,
+        sort=[("t.e", pymongo.ASCENDING)],
+        skip=(query_args.page-1)*25,
+        limit=25
+    )
+    return {
+        "error": False,
+        "autoget": app.supporter.parse_posts_v0(posts, requester=request.user),
+        "page#": query_args.page,
+        "pages": get_total_pages("posts", query)
+    }, 200
+
 
 @posts_bp.get("/<post_id>/reactions/<emoji_reaction>")
 @validate_querystring(PagedQueryArgs)
@@ -873,11 +923,15 @@ async def add_post_reaction(post_id: str, emoji_reaction: str):
         return {"error": True, "type": "tooManyReactions"}, 403
 
     # Add reaction
-    db.post_reactions.update_one({"_id": {
+    res = db.post_reactions.update_one({"_id": {
         "post_id": post["_id"],
         "emoji": emoji_reaction,
         "user": request.user
     }}, {"$set": {"time": int(time.time())}}, upsert=True)
+    if res.upserted_id is not None:
+        db.posts.update_one({"_id": post["_id"]}, {"$inc": {
+            "like_count" if emoji_reaction in LIKE_EMOJIS else "reaction_count": 1
+        }})
 
     # Update post
     existing_reaction = None
@@ -966,6 +1020,10 @@ async def remove_post_reaction(post_id: str, emoji_reaction: str, username: str)
         "emoji": emoji_reaction,
         "user": username
     }})
+    _field = "like_count" if emoji_reaction in LIKE_EMOJIS else "reaction_count"
+    db.posts.update_one({"_id": post["_id"]}, {"$inc": {_field: -1}})
+    db.posts.update_one({"_id": post["_id"], _field: {"$lt": 0}},
+                        {"$set": {_field: 0}})
 
     # Update post
     for reaction in post["reactions"]:

@@ -469,10 +469,14 @@ async def restore_post(post_id):
         del post["deleted_at"]
     if "mod_deleted" in post:
         del post["mod_deleted"]
+    was_deleted = post.get("isDeleted", False)
     db.posts.update_one(
         {"_id": post_id},
         {"$set": {"isDeleted": False}, "$unset": {"deleted_at": "", "mod_deleted": ""}},
     )
+    if was_deleted and post.get("reply_to"):
+        db.posts.update_many({"_id": {"$in": post["reply_to"]}},
+                             {"$inc": {"reply_count": 1}})
 
     # Return updated post
     post["error"] = False

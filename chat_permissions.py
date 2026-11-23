@@ -5,6 +5,7 @@ from database import db
 # Permission key -> minimum tier a role must have to be granted it
 PERMISSIONS = {
     "send_messages": 0,
+    "reply_to_posts": 0,
     "delete_own_messages": 0,
     "invite_members": 0,
     "add_emotes": 0,
@@ -35,7 +36,7 @@ ADMIN_TIER = 4
 
 # (id, name, tier, granted permissions)
 PRESET_ROLES = [
-    ("default", "Default", 0, ["send_messages", "delete_own_messages", "invite_members", "add_reactions", "share_posts", "react", "edit_messages"]),
+    ("default", "Default", 0, ["send_messages", "reply_to_posts", "delete_own_messages", "invite_members", "add_reactions", "share_posts", "react", "edit_messages"]),
     ("stickerer", "Stickerer", 0, ["add_emotes", "edit_emotes", "delete_emotes"]),
     ("customiser", "Customiser", 0, ["change_color", "change_name", "change_icon", "delete_icon"]),
     ("pinner", "Pinner", 0, ["pin_messages", "unpin_messages"]),
@@ -192,6 +193,6 @@ def purpose_defaults(purpose) -> tuple:
         # Members can't post, but can still react/share/edit
         default_role["permissions"] = {
             perm: True
-            for perm in ("add_reactions", "react", "share_posts", "edit_messages")
+            for perm in ("add_reactions", "react", "share_posts", "edit_messages", "reply_to_posts")
         }
     return roles, invites_enabled, allow_sharing, share_context
