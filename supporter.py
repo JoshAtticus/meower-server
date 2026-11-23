@@ -94,7 +94,8 @@ class Supporter:
         nonce: Optional[str] = None,
         chat_members: list[str] = [],
         reply_to: list[str] = [],
-        category: Optional[str] = None
+        category: Optional[str] = None,
+        reply_only: bool = False
     ) -> tuple[bool, dict]:
         # Create post ID and get timestamp
         post_id = ulid()
@@ -125,6 +126,8 @@ class Supporter:
             "reaction_count": 0,
             "reply_count": 0
         }
+        if reply_only:
+            post["reply_only"] = True
         if origin == "inbox" and category:
             post["inbox_category"] = category
 

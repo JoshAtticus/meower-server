@@ -62,6 +62,7 @@ class PostBody(BaseModel):
     attachments: Optional[list[str]] = Field(default_factory=list)
     reply_to: Optional[list[str]] = Field(default_factory=list)
     stickers: Optional[list[str]] = Field(default_factory=list)
+    reply_only: Optional[bool] = False
 
     class Config:
         validate_assignment = True
@@ -609,7 +610,7 @@ async def get_chat_posts(chat_id, query_args: PagedQueryArgs):
         abort(404)
 
     # Get and return posts
-    query = {"post_origin": chat_id, "isDeleted": False}
+    query = {"post_origin": chat_id, "isDeleted": False, "reply_only": {"$ne": True}}
     return {
         "error": False,
         "autoget": app.supporter.parse_posts_v0(db.posts.find(
@@ -773,7 +774,8 @@ async def create_chat_post(chat_id, data: PostBody):
         stickers=data.stickers,
         nonce=data.nonce,
         chat_members=(None if chat_id == "livechat" else chat["members"]),
-        reply_to=unique_reply_to_post_ids
+        reply_to=unique_reply_to_post_ids,
+        reply_only=bool(data.reply_only and unique_reply_to_post_ids)
     )
 
     # Apply any DM request change and tell both members (public shape only)

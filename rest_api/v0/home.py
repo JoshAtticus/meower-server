@@ -22,6 +22,7 @@ class PostBody(BaseModel):
     attachments: Optional[list[str]] = Field(default_factory=list)
     reply_to: Optional[list[str]] = Field(default_factory=list)
     stickers: Optional[list[str]] = Field(default_factory=list)
+    reply_only: Optional[bool] = False
 
     class Config:
         validate_assignment = True
@@ -33,7 +34,7 @@ class PostBody(BaseModel):
 async def get_home_posts(query_args: GetHomeQueryArgs):
     if not request.user:
         query_args.page = 1
-    query = {"post_origin": "home", "isDeleted": False}
+    query = {"post_origin": "home", "isDeleted": False, "reply_only": {"$ne": True}}
     return {
         "error": False,
         "autoget": app.supporter.parse_posts_v0(db.posts.find(
@@ -118,7 +119,8 @@ async def create_home_post(data: PostBody):
         attachments=attachments,
         stickers=data.stickers,
         nonce=data.nonce,
-        reply_to=unique_reply_to_post_ids
+        reply_to=unique_reply_to_post_ids,
+        reply_only=bool(data.reply_only and unique_reply_to_post_ids)
     )
 
     # Return new post
