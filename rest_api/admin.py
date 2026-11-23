@@ -991,6 +991,41 @@ async def clear_quote(username):
     return {"error": False}, 200
 
 
+@admin_bp.delete("/users/<username>/display_name")
+async def clear_display_name(username):
+    # Check permissions
+    if not security.has_permission(
+        request.permissions, security.AdminPermissions.CLEAR_PROFILE_DETAILS
+    ):
+        abort(401)
+
+    # Make sure user isn't protected
+    if not security.has_permission(request.permissions, security.AdminPermissions.SYSADMIN):
+        account = db.usersv0.find_one(
+            {"_id": username}, projection={"flags": 1}
+        )
+        if account and (account["flags"] & security.UserFlags.PROTECTED) == security.UserFlags.PROTECTED:
+            abort(403)
+
+    # Update user
+    db.usersv0.update_one(
+        {"_id": username, "display_name": {"$ne": None}}, {"$set": {"display_name": ""}}
+    )
+
+    # Sync config between sessions
+    app.cl.send_event("update_config", {"display_name": ""}, usernames=[username])
+
+    # Send updated display name to other clients
+    app.cl.send_event("update_profile", {"_id": username, "display_name": ""})
+
+    # Add log
+    security.add_audit_log(
+        "cleared_display_name", request.user, request.ip, {"username": username}
+    )
+
+    return {"error": False}, 200
+
+
 @admin_bp.get("/chats/<chat_id>")
 async def get_chat(chat_id):
     # Check permissions

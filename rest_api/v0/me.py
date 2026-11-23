@@ -30,6 +30,7 @@ class UpdateConfigBody(BaseModel):
     avatar: Optional[str] = Field(default=None, max_length=24)
     avatar_color: Optional[str] = Field(default=None, min_length=6, max_length=6)  # hex code without the #
     quote: Optional[str] = Field(default=None, max_length=360)
+    display_name: Optional[str] = Field(default=None)
     unread_inbox: Optional[bool] = Field(default=None)
     theme: Optional[str] = Field(default=None, min_length=1, max_length=256)
     mode: Optional[bool] = Field(default=None)
@@ -137,10 +138,23 @@ async def update_config(data: UpdateConfigBody):
     # Get new config
     new_config = data.model_dump()
 
+    # An explicit null display_name clears it
+    if "display_name" in new_config and new_config["display_name"] is None:
+        new_config["display_name"] = ""
+
     # Filter values that are set to None
     for k, v in copy(new_config).items():
         if v is None:
             del new_config[k]
+
+    # Validate display name: trimmed, 1-32 chars when set, no control chars
+    if "display_name" in new_config:
+        display_name = new_config["display_name"].strip()
+        if len(display_name) > 32 or any(
+            ord(c) < 0x20 or ord(c) == 0x7F for c in display_name
+        ):
+            return {"error": True, "type": "invalidDisplayName"}, 400
+        new_config["display_name"] = display_name
 
     # Delete updated profile data if account is restricted
     if security.is_restricted(request.user, security.Restrictions.EDITING_PROFILE):
@@ -152,6 +166,8 @@ async def update_config(data: UpdateConfigBody):
             del new_config["avatar_color"]
         if "quote" in new_config:
             del new_config["quote"]
+        if "display_name" in new_config:
+            del new_config["display_name"]
 
     # Claim avatar (and delete old one)
     if "avatar" in new_config:
@@ -192,6 +208,8 @@ async def update_config(data: UpdateConfigBody):
         updated_profile_data["avatar_color"] = new_config["avatar_color"]
     if "quote" in new_config:
         updated_profile_data["quote"] = new_config["quote"]
+    if "display_name" in new_config:
+        updated_profile_data["display_name"] = new_config["display_name"]
     if len(updated_profile_data) > 1:
         app.cl.send_event("update_profile", updated_profile_data)
 

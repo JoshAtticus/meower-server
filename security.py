@@ -139,6 +139,7 @@ def create_account(username: str, password: str, ip: str):
         "avatar": "",
         "avatar_color": "000000",
         "quote": "",
+        "display_name": "",
         "pswd": hash_password(password),
         "mfa_recovery_code": secrets.token_hex(5),
         # tokens has a unique index; an empty array indexes as null and collides
@@ -193,6 +194,7 @@ def create_bot_account(username: str, owner: str) -> str:
         "avatar": "",
         "avatar_color": "000000",
         "quote": "",
+        "display_name": "",
         "pswd": None,  # bots can never password-login
         "mfa_recovery_code": secrets.token_hex(5),
         "tokens": [token],
@@ -399,6 +401,18 @@ def update_settings(username, newdata):
     if "quote" in newdata and isinstance(newdata["quote"], str) and len(newdata["quote"]) <= 360:
         updated_user_vals["quote"] = newdata["quote"]
 
+    # Update display name: trimmed, <=32 chars, no control characters; "" clears it
+    if "display_name" in newdata:
+        display_name = newdata["display_name"]
+        if display_name is None:
+            display_name = ""
+        if (
+            isinstance(display_name, str)
+            and len(display_name.strip()) <= 32
+            and not any(ord(c) < 0x20 or ord(c) == 0x7F for c in display_name.strip())
+        ):
+            updated_user_vals["display_name"] = display_name.strip()
+
     # Update settings
     for key, default_val in DEFAULT_USER_SETTINGS.items():
         if key in newdata:
@@ -477,6 +491,7 @@ def delete_account(username, purge=False):
         "avatar": None,
         "avatar_color": None,
         "quote": None,
+        "display_name": None,
         "pswd": None,
         "mfa_recovery_code": None,
         # tokens has a unique index, so use a unique (and unguessable) tombstone instead of None
