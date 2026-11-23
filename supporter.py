@@ -93,7 +93,8 @@ class Supporter:
         stickers: list[str] = [],
         nonce: Optional[str] = None,
         chat_members: list[str] = [],
-        reply_to: list[str] = []
+        reply_to: list[str] = [],
+        category: Optional[str] = None
     ) -> tuple[bool, dict]:
         # Create post ID and get timestamp
         post_id = ulid()
@@ -121,6 +122,8 @@ class Supporter:
             "emojis": list(set(re.findall(CUSTOM_EMOJI_REGEX, content))),
             "stickers": stickers
         }
+        if origin == "inbox" and category:
+            post["inbox_category"] = category
 
         # Add database item
         if origin != "livechat":
@@ -167,7 +170,7 @@ class Supporter:
                 msg = msgpack.loads(msg["data"])
                 match msg.pop("op"):
                     case "alert_user":
-                        self.create_post("inbox", msg["user"], msg["content"])
+                        self.create_post("inbox", msg["user"], msg["content"], category=msg.get("category"))
                     case "ban_user":
                         # Get user details
                         username = msg.pop("user")
@@ -277,6 +280,7 @@ class Supporter:
             # Stupid legacy stuff
             post.update({
                 "type": 2 if post["post_origin"] == "inbox" else 1,
+                "category": post.pop("inbox_category", None) if post["post_origin"] == "inbox" else post.get("category"),
                 "post_id": post["_id"]
             })
 

@@ -844,7 +844,7 @@ async def send_alert(username, data: InboxMessageBody):
         abort(404)
 
     # Create inbox message
-    post = app.supporter.create_post("inbox", username, data.content)
+    post = app.supporter.create_post("inbox", username, data.content, category="moderation")
 
     # Add log
     security.add_audit_log(
@@ -911,7 +911,7 @@ async def restore_user_password(username):
         client.kick()
 
     # Notify user
-    app.supporter.create_post("inbox", username, "Your account password was reverted to a previous password by a moderator. If you did not request this, please secure your account immediately.")
+    app.supporter.create_post("inbox", username, "Your account password was reverted to a previous password by a moderator. If you did not request this, please secure your account immediately.", category="security")
 
     # Add log
     security.add_audit_log(
@@ -1412,7 +1412,7 @@ async def send_announcement(data: InboxMessageBody):
         abort(401)
 
     # Create announcement
-    post = app.supporter.create_post("inbox", "Server", data.content)
+    post = app.supporter.create_post("inbox", "Server", data.content, category="announcement")
 
     # Add log
     security.add_audit_log(

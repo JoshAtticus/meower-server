@@ -239,8 +239,8 @@ async def update_relationship(username, data: UpdateRelationshipBody):
     if data.state == 1:
         reciprocal = db.relationships.find_one({"_id": {"from": username, "to": request.user}, "state": 1})
         if reciprocal:
-            app.supporter.create_post("inbox", username, f"@{request.user} accepted your friend request!")
-            app.supporter.create_post("inbox", request.user, f"You are now friends with @{username}!")
+            app.supporter.create_post("inbox", username, f"@{request.user} accepted your friend request!", category="friends")
+            app.supporter.create_post("inbox", request.user, f"You are now friends with @{username}!", category="friends")
             # Becoming friends auto-accepts any pending DM request between them
             for dm in db.chats.find({"type": 1, "members": {"$all": [request.user, username]}, "dm_request": {"$exists": True}}, projection={"members": 1}):
                 db.chats.update_one({"_id": dm["_id"]}, {"$unset": {"dm_request": ""}})
@@ -249,7 +249,7 @@ async def update_relationship(username, data: UpdateRelationshipBody):
                     "dm_request": None
                 }, usernames=dm["members"])
         else:
-            app.supporter.create_post("inbox", username, f"@{request.user} sent you a friend request! Head to the friends page to accept it.")
+            app.supporter.create_post("inbox", username, f"@{request.user} sent you a friend request! Head to the friends page to accept it.", category="friends")
         app.cl.send_event("update_friends", {}, usernames=[request.user, username])
     elif data.state == 0:
         app.cl.send_event("update_friends", {}, usernames=[request.user, username])

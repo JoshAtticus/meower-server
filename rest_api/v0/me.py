@@ -290,7 +290,7 @@ async def change_password(data: ChangePasswordBody):
     }})
 
     # Send alert
-    app.supporter.create_post("inbox", account["_id"], "Your account password has been changed. If this wasn't requested by you, please secure your account immediately.")
+    app.supporter.create_post("inbox", account["_id"], "Your account password has been changed. If this wasn't requested by you, please secure your account immediately.", category="security")
 
     return {"error": False}, 200
 
@@ -349,7 +349,7 @@ async def add_authenticator(data: AddAuthenticatorBody):
     db.authenticators.insert_one(authenticator)
 
     # Send alert
-    app.supporter.create_post("inbox", account["_id"], "A multi-factor authenticator has been added to your account. If this wasn't requested by you, please secure your account immediately.")
+    app.supporter.create_post("inbox", account["_id"], "A multi-factor authenticator has been added to your account. If this wasn't requested by you, please secure your account immediately.", category="security")
 
     # Return authenticator and MFA recovery code
     del authenticator["user"]
@@ -426,7 +426,7 @@ async def remove_authenticator(authenticator_id: str, data: RemoveAuthenticatorB
         abort(404)
 
     # Send alert
-    app.supporter.create_post("inbox", account["_id"], "A multi-factor authenticator has been removed from your account. If this wasn't requested by you, please secure your account immediately.")
+    app.supporter.create_post("inbox", account["_id"], "A multi-factor authenticator has been removed from your account. If this wasn't requested by you, please secure your account immediately.", category="security")
 
     return {"error": False}
 
@@ -480,7 +480,7 @@ async def reset_mfa_recovery_code(data: ResetMFARecoveryCodeBody):
     db.usersv0.update_one({"_id": request.user}, {"$set": {"mfa_recovery_code": mfa_recovery_code}})
 
     # Send alert
-    app.supporter.create_post("inbox", account["_id"], "Your multi-factor authentication recovery code has been reset. If this wasn't requested by you, please secure your account immediately.")
+    app.supporter.create_post("inbox", account["_id"], "Your multi-factor authentication recovery code has been reset. If this wasn't requested by you, please secure your account immediately.", category="security")
 
     return {"error": False, "mfa_recovery_code": mfa_recovery_code}
 

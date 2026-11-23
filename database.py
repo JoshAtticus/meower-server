@@ -391,4 +391,26 @@ for chat in db.chats.find(
                 set_fields[f"roles.{default_idx}.permissions.{perm}"] = True
     db.chats.update_one({"_id": chat["_id"]}, {"$set": set_fields})
 
+
+# Inbox categories: infer a category for existing inbox posts
+if not db.config.find_one({"_id": "inbox_categories_migrated"}):
+    def _inbox_category(post):
+        p = post.get("p", "").lower()
+        if post.get("u") == "Server":
+            return "announcement"
+        if "welcome to meower" in p or "scheduled for deletion" in p:
+            return "account"
+        if "friend request" in p or "now friends" in p:
+            return "friends"
+        if "password" in p or "multi-factor" in p or "recovery code" in p:
+            return "security"
+        if "group chat" in p:
+            return "chats"
+        return None
+    for _post in db.posts.find({"post_origin": "inbox", "inbox_category": {"$exists": False}}, projection={"p": 1, "u": 1}):
+        _cat = _inbox_category(_post)
+        if _cat:
+            db.posts.update_one({"_id": _post["_id"]}, {"$set": {"inbox_category": _cat}})
+    db.config.update_one({"_id": "inbox_categories_migrated"}, {"$set": {"done": True}}, upsert=True)
+
 print("") # finished startup logs

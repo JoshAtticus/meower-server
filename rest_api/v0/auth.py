@@ -110,7 +110,7 @@ async def login(data: AuthRequest):
                     db.usersv0.update_one({"_id": account["_id"]}, {"$set": {
                         "mfa_recovery_code": secrets.token_hex(5)
                     }})
-                    app.supporter.create_post("inbox", account["_id"], "All multi-factor authenticators have been removed from your account by someone who used your multi-factor authentication recovery code. If this wasn't you, please secure your account immediately.")
+                    app.supporter.create_post("inbox", account["_id"], "All multi-factor authenticators have been removed from your account by someone who used your multi-factor authentication recovery code. If this wasn't you, please secure your account immediately.", category="security")
                 else:
                     security.ratelimit(f"login:u:{account['_id']}", 5, 60)
                     abort(401)

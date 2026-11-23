@@ -466,7 +466,7 @@ def send_chat_invite(chat: dict, username: str, expires_in: Optional[int] = None
     }, usernames=[username])
 
     # Send inbox message to user
-    app.supporter.create_post("inbox", username, f"@{request.user} invited you to join the group chat '{chat['nickname']}'! You can accept or decline the invite from your chats page.")
+    app.supporter.create_post("inbox", username, f"@{request.user} invited you to join the group chat '{chat['nickname']}'! You can accept or decline the invite from your chats page.", category="chats")
 
     # Notify chat members so pending invite lists update
     app.cl.send_event("chat_invites_update", {
@@ -567,7 +567,7 @@ async def add_chat_member(chat_id, username):
     }, usernames=chat["members"])
 
     # Send inbox message to user
-    app.supporter.create_post("inbox", username, f"You have been added to the group chat '{chat['nickname']}' by @{request.user}!")
+    app.supporter.create_post("inbox", username, f"You have been added to the group chat '{chat['nickname']}' by @{request.user}!", category="chats")
 
     # Send in-chat notification
     app.supporter.create_post(chat_id, "Server", f"@{request.user} added @{username} to the group chat.", chat_members=chat["members"])
@@ -633,7 +633,7 @@ async def remove_chat_member(chat_id, username):
     }, usernames=chat["members"])
 
     # Send inbox message to user
-    app.supporter.create_post("inbox", username, f"You have been removed from the group chat '{chat['nickname']}' by @{request.user}!")
+    app.supporter.create_post("inbox", username, f"You have been removed from the group chat '{chat['nickname']}' by @{request.user}!", category="chats")
 
     # Send in-chat notification
     app.supporter.create_post(chat_id, "Server", f"@{request.user} removed @{username} from the group chat.", chat_members=chat["members"])
@@ -939,7 +939,7 @@ async def ban_chat_member(chat_id, username, data: BanBody):
     }, usernames=chat["members"])
 
     # Send inbox message to user
-    app.supporter.create_post("inbox", username, f"You have been banned from the group chat '{chat['nickname']}' by @{request.user}." + (f" The ban expires <t:{ban['expires']}:R>." if ban["expires"] else ""))
+    app.supporter.create_post("inbox", username, f"You have been banned from the group chat '{chat['nickname']}' by @{request.user}." + (f" The ban expires <t:{ban['expires']}:R>." if ban["expires"] else ""), category="chats")
 
     # Send in-chat notification
     app.supporter.create_post(chat_id, "Server", f"@{request.user} banned @{username} from the group chat.", chat_members=chat["members"])
@@ -1010,7 +1010,7 @@ async def unban_chat_member(chat_id, username):
     }, usernames=chat["members"])
 
     # Send inbox message to user
-    app.supporter.create_post("inbox", username, f"You have been unbanned from the group chat '{chat['nickname']}'.")
+    app.supporter.create_post("inbox", username, f"You have been unbanned from the group chat '{chat['nickname']}'.", category="chats")
 
     # Send in-chat notification
     app.supporter.create_post(chat_id, "Server", f"@{request.user} unbanned @{username} from the group chat.", chat_members=chat["members"])

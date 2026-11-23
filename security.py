@@ -161,6 +161,7 @@ def create_account(username: str, password: str, ip: str):
     rdb.publish("admin", msgpack.packb({
         "op": "alert_user",
         "user": username,
+        "category": "account",
         "content": "Welcome to Meower! We welcome you with open arms! You can get started by making friends in the global chat or home, or by searching for people and adding them to a group chat. We hope you have fun!"
     }))
 
@@ -283,6 +284,7 @@ def create_user_token(username: str, ip: str, used_token: Optional[str] = None) 
         rdb.publish("admin", msgpack.packb({
             "op": "alert_user",
             "user": account["_id"],
+            "category": "account",
             "content": "Your account was scheduled for deletion but you logged back in. Your account is no longer scheduled for deletion! If you didn't request for your account to be deleted, please change your password immediately."
         }))
     
