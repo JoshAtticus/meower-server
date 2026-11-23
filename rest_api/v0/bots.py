@@ -5,6 +5,7 @@ from quart import Blueprint, request, abort, current_app as app
 from quart_schema import validate_request, validate_querystring
 
 import security
+import username_change
 from database import db, get_total_pages
 
 
@@ -94,7 +95,7 @@ async def create_bot(data: CreateBotBody):
         return {"error": True, "type": "illegalCharacters"}, 400
 
     # Make sure the name isn't taken
-    if security.account_exists(data.name, ignore_case=True):
+    if security.account_exists(data.name, ignore_case=True) or username_change.name_blocked_for(data.name.lower()):
         return {"error": True, "type": "usernameExists"}, 409
 
     # Limit bots per owner

@@ -1,3 +1,4 @@
+import re
 from quart import Blueprint, current_app as app, request, abort, send_file
 import os
 from quart_schema import validate_request, validate_querystring
@@ -13,6 +14,7 @@ import uuid
 import secrets
 
 import security
+import username_change
 import data_export as data_export_builder
 from database import db, rdb, get_total_pages
 from uploads import claim_file, unclaim_file
@@ -257,6 +259,78 @@ async def get_friends():
         "incoming": sorted(incoming_requests - outgoing - {u for u, s in mine.items() if s == 2}),
         "outgoing": sorted(outgoing - incoming_requests)
     }, 200
+
+
+class ChangeUsernameBody(BaseModel):
+    username: str = Field(min_length=1, max_length=20)
+    password: str = Field(min_length=1, max_length=255)
+    totp_code: Optional[str] = Field(default=None, min_length=6, max_length=6)
+
+    class Config:
+        str_strip_whitespace = True
+
+
+@me_bp.post("/username")
+@validate_request(ChangeUsernameBody)
+async def change_username(data: ChangeUsernameBody):
+    # Check authorization
+    if not request.user:
+        abort(401)
+
+    if resp := bot_guard():
+        return resp
+
+    # Check ratelimit
+    if security.ratelimited(f"login:u:{request.user}") or security.ratelimited(f"username:{request.user}"):
+        abort(429)
+
+    account = db.usersv0.find_one({"_id": request.user})
+
+    # Check password
+    if not security.check_password_hash(data.password, account["pswd"]):
+        security.ratelimit(f"login:u:{request.user}", 5, 60)
+        return {"error": True, "type": "invalidCredentials"}, 401
+
+    # Check 2FA
+    authenticators = list(db.authenticators.find({"user": request.user, "type": "totp"}))
+    if authenticators:
+        if not data.totp_code:
+            return {"error": True, "type": "mfaRequired"}, 403
+        if not any(pyotp.TOTP(a["totp_secret"]).verify(data.totp_code, valid_window=1) for a in authenticators):
+            security.ratelimit(f"login:u:{request.user}", 5, 60)
+            return {"error": True, "type": "invalidTOTPCode"}, 401
+
+    security.ratelimit(f"username:{request.user}", 10, 300)
+
+    # Validate the new name
+    if not re.fullmatch(security.USERNAME_REGEX, data.username):
+        return {"error": True, "type": "illegalCharacters"}, 400
+    if data.username == request.user:
+        return {"error": True, "type": "sameUsername"}, 400
+
+    # One change every 72 hours
+    wait = username_change.cooldown_remaining(account)
+    if wait:
+        return {"error": True, "type": "usernameChangeCooldown", "retry_after": wait}, 429
+
+    # Taken by someone else? (changing only the capitalisation of your own name is fine)
+    if data.username.lower() != request.user.lower() and security.account_exists(data.username, ignore_case=True):
+        return {"error": True, "type": "usernameExists"}, 409
+
+    # Held for someone else after a rename? (it is still yours to take back)
+    if username_change.name_blocked_for(data.username.lower(), account["uuid"]):
+        return {"error": True, "type": "usernameReserved"}, 409
+
+    old = request.user
+    username_change.change_username(old, data.username)
+
+    # Log everyone out of their live connections: they reconnect under the new name
+    for client in list(app.cl.usernames.get(old, [])):
+        client.kick()
+
+    app.supporter.create_post("inbox", data.username, f"Your username was changed from @{old} to @{data.username}. If this wasn't you, please secure your account immediately.", category="security")
+
+    return {"error": False, "username": data.username}, 200
 
 
 @me_bp.patch("/password")

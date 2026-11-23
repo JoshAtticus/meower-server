@@ -7,6 +7,7 @@ import uuid
 import time
 
 import security
+import username_change
 from database import db, get_total_pages
 
 
@@ -38,6 +39,14 @@ class ReportBody(BaseModel):
 async def check_user_exists():
     username = request.view_args.get("username")
     user = db.usersv0.find_one({"lower_username": username.lower()}, projection={"_id": 1, "flags": 1})
+    request.renamed_from = None
+    if not user:
+        # links to a username that was recently changed follow the account
+        held = username_change.reservation(username.lower())
+        if held:
+            user = db.usersv0.find_one({"uuid": held["uuid"]}, projection={"_id": 1, "flags": 1})
+            if user:
+                request.renamed_from = held["old_name"]
     if (not user) or (user["flags"] & security.UserFlags.DELETED == security.UserFlags.DELETED):
         abort(404)
     else:
@@ -48,6 +57,8 @@ async def check_user_exists():
 async def get_user(username):
     account = security.get_account(username, (request.user and request.user.lower() == username.lower()))
     account["error"] = False
+    if request.renamed_from:
+        account["renamed_from"] = request.renamed_from
     return account, 200
 
 

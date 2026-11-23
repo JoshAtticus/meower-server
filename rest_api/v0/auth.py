@@ -6,6 +6,7 @@ from pydantic import Field
 from typing import Optional
 from database import db, registration_blocked_ips
 import security
+import username_change
 
 auth_bp = Blueprint("auth_bp", __name__, url_prefix="/auth")
 
@@ -155,8 +156,8 @@ async def register(data: AuthRequest):
         security.ratelimit(f"register:{request.ip}:f", 5, 30)
         return {"error": True, "type": "registrationBlocked"}, 403
 
-    # Make sure username isn't taken
-    if security.account_exists(data.username, ignore_case=True):
+    # Make sure username isn't taken or held after someone's rename
+    if security.account_exists(data.username, ignore_case=True) or username_change.name_blocked_for(data.username.lower()):
         security.ratelimit(f"register:{request.ip}:f", 5, 30)
         return {"error": True, "type": "usernameExists"}, 409
 
