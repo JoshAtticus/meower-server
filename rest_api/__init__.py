@@ -17,7 +17,7 @@ import security
 app = Quart(__name__)
 app.config["APPLICATION_ROOT"] = os.getenv("API_ROOT", "")
 app.url_map.strict_slashes = False
-cors(app, allow_origin="*")
+cors(app, allow_origin="*", expose_headers=["Date"])
 QuartSchema(app)
 
 
