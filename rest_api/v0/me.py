@@ -140,8 +140,12 @@ async def update_config(data: UpdateConfigBody):
     # Get new config
     new_config = data.model_dump()
 
-    # An explicit null display_name clears it
-    if "display_name" in new_config and new_config["display_name"] is None:
+    # An explicit null display_name clears it (but leaving it out must not)
+    if (
+        "display_name" in new_config
+        and new_config["display_name"] is None
+        and "display_name" in data.model_fields_set
+    ):
         new_config["display_name"] = ""
 
     # Filter values that are set to None
@@ -159,17 +163,12 @@ async def update_config(data: UpdateConfigBody):
         new_config["display_name"] = display_name
 
     # Delete updated profile data if account is restricted
+    profile_blocked = False
     if security.is_restricted(request.user, security.Restrictions.EDITING_PROFILE):
-        if "pfp_data" in new_config:
-            del new_config["pfp_data"]
-        if "avatar" in new_config:
-            del new_config["avatar"]
-        if "avatar_color" in new_config:
-            del new_config["avatar_color"]
-        if "quote" in new_config:
-            del new_config["quote"]
-        if "display_name" in new_config:
-            del new_config["display_name"]
+        for key in ("pfp_data", "avatar", "avatar_color", "quote", "display_name"):
+            if key in new_config:
+                del new_config[key]
+                profile_blocked = True
 
     # Claim avatar (and delete old one)
     if "avatar" in new_config:
@@ -214,6 +213,10 @@ async def update_config(data: UpdateConfigBody):
         updated_profile_data["display_name"] = new_config["display_name"]
     if len(updated_profile_data) > 1:
         app.cl.send_event("update_profile", updated_profile_data)
+
+    # Tell the client that its profile changes were rejected
+    if profile_blocked:
+        return {"error": True, "type": "accountBanned"}, 403
 
     return {"error": False}, 200
 
