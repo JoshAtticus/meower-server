@@ -775,7 +775,8 @@ async def create_chat_post(chat_id, data: PostBody):
         nonce=data.nonce,
         chat_members=(None if chat_id == "livechat" else chat["members"]),
         reply_to=unique_reply_to_post_ids,
-        reply_only=bool(data.reply_only and unique_reply_to_post_ids)
+        reply_only=bool(unique_reply_to_post_ids and (data.reply_only or db.posts.count_documents(
+            {"_id": {"$in": unique_reply_to_post_ids}, "reply_to.0": {"$exists": True}}, limit=1)))
     )
 
     # Apply any DM request change and tell both members (public shape only)

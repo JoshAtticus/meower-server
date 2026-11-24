@@ -120,7 +120,8 @@ async def create_home_post(data: PostBody):
         stickers=data.stickers,
         nonce=data.nonce,
         reply_to=unique_reply_to_post_ids,
-        reply_only=bool(data.reply_only and unique_reply_to_post_ids)
+        reply_only=bool(unique_reply_to_post_ids and (data.reply_only or db.posts.count_documents(
+            {"_id": {"$in": unique_reply_to_post_ids}, "reply_to.0": {"$exists": True}}, limit=1)))
     )
 
     # Return new post
