@@ -1,3 +1,4 @@
+import base64
 from threading import Thread
 from typing import Optional, Iterable, Any
 import uuid, time, msgpack, pymongo, re, copy, secrets
@@ -331,9 +332,13 @@ class Supporter:
                     "thumbnail_size": 1,
                     "filename": 1,
                     "width": 1,
-                    "height": 1
+                    "height": 1,
+                    "thumbhash": 1
                 }}
             ]))
+            for attachment in post["attachments"]:
+                if isinstance(attachment.get("thumbhash"), (bytes, bytearray)):
+                    attachment["thumbhash"] = base64.b64encode(attachment["thumbhash"]).decode()
 
             # Custom emojis
             if post.get("emojis"):
