@@ -260,6 +260,22 @@ class Supporter:
             except:
                 continue
 
+    @staticmethod
+    def _with_thumbhashes(emotes: list) -> list:
+        # emoji/sticker IDs are their file IDs; attach the file's ThumbHash (base64)
+        hashes = {
+            f["_id"]: f["thumbhash"]
+            for f in db.files.find(
+                {"_id": {"$in": [e["_id"] for e in emotes]}, "thumbhash": {"$exists": True}},
+                projection={"thumbhash": 1}
+            )
+        }
+        for emote in emotes:
+            h = hashes.get(emote["_id"])
+            if isinstance(h, (bytes, bytearray)):
+                emote["thumbhash"] = base64.b64encode(h).decode()
+        return emotes
+
     def parse_posts_v0(
         self, 
         posts: Iterable[dict[str, Any]],
@@ -342,15 +358,15 @@ class Supporter:
 
             # Custom emojis
             if post.get("emojis"):
-                post["emojis"] = list(db.chat_emojis.find({
+                post["emojis"] = self._with_thumbhashes(list(db.chat_emojis.find({
                     "_id": {"$in": post.get("emojis", [])}
-                }, projection={"created_at": 0, "created_by": 0}))
+                }, projection={"created_at": 0, "created_by": 0})))
 
             # Stickers
             if post.get("stickers"):
-                post["stickers"] = list(db.chat_stickers.find({
+                post["stickers"] = self._with_thumbhashes(list(db.chat_stickers.find({
                     "_id": {"$in": post.get("stickers", [])}
-                }, projection={"created_at": 0, "created_by": 0}))
+                }, projection={"created_at": 0, "created_by": 0})))
 
             # Reactions
             [reaction.update({
