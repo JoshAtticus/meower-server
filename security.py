@@ -26,7 +26,7 @@ for key in SENSITIVE_ACCOUNT_FIELDS:
 DEFAULT_USER_SETTINGS = {
     "unread_inbox": True,
     "theme": "orange",
-    "mode": True,
+    "mode": None,
     "layout": "new",
     "sfx": True,
     "bgm": False,
