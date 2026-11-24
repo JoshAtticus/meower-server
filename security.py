@@ -90,6 +90,7 @@ class Restrictions:
     NEW_CHATS = 4
     EDITING_CHAT_DETAILS = 8
     EDITING_PROFILE = 16
+    UPLOADING = 32
 
 
 def ratelimited(bucket_id: str):
