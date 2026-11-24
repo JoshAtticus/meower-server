@@ -10,7 +10,7 @@ import security
 import supporter as supporter_module
 import chat_permissions
 from database import db, rdb, get_total_pages
-from uploads import claim_file, unclaim_file, file_is_media
+from uploads import claim_file, unclaim_file, file_is_media, expire_file
 from utils import log
 
 
@@ -668,22 +668,24 @@ async def create_chat_post(chat_id, data: PostBody):
                 post_id not in unique_reply_to_post_ids:
                 unique_reply_to_post_ids.append(post_id)
 
-    # Claim attachments (images only)
+    # Claim attachments (images only). Livechat posts aren't stored, so their
+    # files expire (and are deleted) 24 hours after upload.
     attachments = []
-    if chat_id != "livechat":
-        for attachment_id in data.attachments:
-            if attachment_id in attachments:
-                continue
-            file = db.files.find_one({"_id": attachment_id, "bucket": "attachments", "uploaded_by": request.user})
-            if file and not file_is_media(file):
-                return {"error": True, "type": "mediaOnly"}, 400
-            try:
-                claim_file(attachment_id, "attachments", request.user)
-            except Exception as e:
-                log(f"Unable to claim attachment: {e}")
-                return {"error": True, "type": "unableToClaimAttachment"}, 500
-            else:
-                attachments.append(attachment_id)
+    for attachment_id in data.attachments:
+        if attachment_id in attachments:
+            continue
+        file = db.files.find_one({"_id": attachment_id, "bucket": "attachments", "uploaded_by": request.user})
+        if file and not file_is_media(file):
+            return {"error": True, "type": "mediaOnly"}, 400
+        try:
+            claim_file(attachment_id, "attachments", request.user)
+        except Exception as e:
+            log(f"Unable to claim attachment: {e}")
+            return {"error": True, "type": "unableToClaimAttachment"}, 500
+        else:
+            attachments.append(attachment_id)
+            if chat_id == "livechat":
+                expire_file(attachment_id)
 
     # Make sure the post has text content or at least 1 attachment or at least 1 sticker
     if not data.content and not attachments and not data.stickers:

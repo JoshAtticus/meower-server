@@ -46,6 +46,14 @@ def unclaim_file(file_id: str, keep_days: int = 7):
         {"$set": {"claimed": False, "uploaded_at": int(time.time()) + keep_days * 86400}}
     )
 
+def expire_file(file_id: str, ttl_seconds: int = 86400):
+    # The uploads service deletes unclaimed files 30 minutes after uploaded_at,
+    # so push uploaded_at forward to land the deletion ttl_seconds from now
+    db.files.update_one(
+        {"_id": file_id},
+        {"$set": {"claimed": False, "uploaded_at": int(time.time()) + ttl_seconds - 1800}}
+    )
+
 def unclaim_all_files(username: str):
     db.files.update_many(
         {"uploaded_by": username},
