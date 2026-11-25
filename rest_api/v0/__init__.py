@@ -11,6 +11,7 @@ from .me import me_bp
 from .emojis import emojis_bp
 from .invites import invites_bp
 from .invite_links import invite_links_bp
+from .embeds import embeds_bp
 from .bots import bots_bp
 from .explore import explore_bp
 
@@ -25,6 +26,7 @@ v0.register_blueprint(users_bp)
 v0.register_blueprint(chats_bp)
 v0.register_blueprint(invites_bp)
 v0.register_blueprint(invite_links_bp)
+v0.register_blueprint(embeds_bp)
 v0.register_blueprint(search_bp)
 v0.register_blueprint(emojis_bp)
 v0.register_blueprint(bots_bp)
