@@ -7,6 +7,7 @@ from copy import copy
 import pymongo, uuid, time, emoji, msgpack, re
 
 import security
+import email_verification
 import supporter as supporter_module
 import chat_permissions
 from database import db, rdb, get_total_pages
@@ -632,6 +633,8 @@ async def create_chat_post(chat_id, data: PostBody):
     # Check authorization
     if not request.user:
         abort(401)
+    if resp := email_verification.require_verified(request.user):
+        return resp
 
     if not (request.flags & security.UserFlags.POST_RATELIMIT_BYPASS):
         # Check ratelimit
@@ -887,6 +890,8 @@ async def add_post_reaction(post_id: str, emoji_reaction: str):
     # Check authorization
     if not request.user:
         abort(401)
+    if resp := email_verification.require_verified(request.user):
+        return resp
 
     # Ratelimit
     if security.ratelimited(f"react:{request.user}"):

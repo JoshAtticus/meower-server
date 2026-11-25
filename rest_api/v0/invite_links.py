@@ -3,6 +3,7 @@ import secrets
 import time
 
 import security
+import email_verification
 import chat_permissions
 from database import db
 
@@ -58,6 +59,8 @@ def get_link_and_chat(code: str):
 
 @invite_links_bp.post("/chat/<chat_id>")
 async def create_link(chat_id):
+    if resp := email_verification.require_verified(request.user):
+        return resp
     chat, error = get_manageable_chat(chat_id)
     if error:
         return error

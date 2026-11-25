@@ -12,6 +12,10 @@ This module provides account management and authentication services.
 """
 
 SENSITIVE_ACCOUNT_FIELDS = {
+    "email",
+    "email_verified",
+    "email_verified_at",
+    "email_notice_sent",
     "pswd",
     "prev_pswd",
     "mfa_recovery_code",
@@ -83,6 +87,8 @@ class AdminPermissions:
 
     SEND_ANNOUNCEMENTS = 262144
 
+    MANAGE_EMAILS = 524288
+
 
 class Restrictions:
     HOME_POSTS = 1
@@ -129,7 +135,7 @@ def account_exists(username, ignore_case=False):
     return (db.usersv0.count_documents(query, limit=1) > 0)
 
 
-def create_account(username: str, password: str, ip: str):
+def create_account(username: str, password: str, ip: str, email: str = None):
     # Create user
     db.usersv0.insert_one({
         "_id": username,
@@ -142,6 +148,8 @@ def create_account(username: str, password: str, ip: str):
         "quote": "",
         "display_name": "",
         "pswd": hash_password(password),
+        "email": email,
+        "email_verified": False,
         "mfa_recovery_code": secrets.token_hex(5),
         # tokens has a unique index; an empty array indexes as null and collides
         "tokens": [f"pending:{secrets.token_urlsafe(TOKEN_BYTES)}"],

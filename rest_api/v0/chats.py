@@ -5,6 +5,7 @@ from typing import Optional, Literal
 import pymongo, uuid, time, re, os
 
 import security
+import email_verification
 import chat_permissions
 from database import db, get_total_pages
 from uploads import claim_file, unclaim_file
@@ -491,6 +492,8 @@ async def add_chat_member(chat_id, username):
     # Check authorization
     if not request.user:
         abort(401)
+    if resp := email_verification.require_verified(request.user):
+        return resp
 
     # Check ratelimit
     if security.ratelimited(f"update_chat:{request.user}"):
@@ -731,6 +734,8 @@ async def create_chat_invite(chat_id, data: InviteBody):
     # Check authorization
     if not request.user:
         abort(401)
+    if resp := email_verification.require_verified(request.user):
+        return resp
 
     # Check ratelimit
     if security.ratelimited(f"update_chat:{request.user}"):

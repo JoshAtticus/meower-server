@@ -14,6 +14,8 @@ import uuid
 import secrets
 
 import security
+import email_verification
+import time as _time
 import username_change
 import data_export as data_export_builder
 from database import db, rdb, get_total_pages
@@ -86,8 +88,23 @@ async def get_me():
     if not request.user:
         abort(401)
         
+    # Existing accounts get a one-off inbox notice about adding an email
+    if (date := email_verification.send_legacy_notice_if_needed(request.user)):
+        app.supporter.create_post(
+            "inbox", request.user,
+            "Meower now needs a verified email address on every account. Add and verify yours in "
+            f"[Settings]({email_verification.client_url()}/settings) before {date} to keep using "
+            "most features: sending messages in chats, reacting, uploading files, using custom emoji, "
+            "and sending friend requests, message requests and chat invites. It only takes a minute, "
+            "and your email is only used for verification and security alerts.",
+            category="security")
+
     # Get and return account
-    return {"error": False, **security.get_account(request.user, include_config=True)}, 200
+    return {
+        "error": False,
+        **security.get_account(request.user, include_config=True),
+        "email_state": email_verification.account_state(request.user)
+    }, 200
 
 
 @me_bp.delete("/")
@@ -171,6 +188,9 @@ async def update_config(data: UpdateConfigBody):
                 profile_blocked = True
 
     # Claim avatar (and delete old one)
+    if new_config.get("avatar"):
+        if resp := email_verification.require_verified(request.user):
+            return resp
     if "avatar" in new_config:
         cur_avatar = db.usersv0.find_one({"_id": request.user}, projection={"avatar": 1})["avatar"]
         if new_config["avatar"] != "":
@@ -384,6 +404,10 @@ async def change_password(data: ChangePasswordBody):
 
     # Send alert
     app.supporter.create_post("inbox", account["_id"], "Your account password has been changed. If this wasn't requested by you, please secure your account immediately.", category="security")
+
+    await email_verification.send_security_email(
+        request.user, "Your password was changed",
+        "The password on your account was just changed.")
 
     return {"error": False}, 200
 

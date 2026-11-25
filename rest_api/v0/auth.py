@@ -6,6 +6,7 @@ from pydantic import Field
 from typing import Optional
 from database import db, registration_blocked_ips
 import security
+import email_verification
 import username_change
 
 auth_bp = Blueprint("auth_bp", __name__, url_prefix="/auth")
@@ -16,6 +17,7 @@ class AuthRequest(BaseModel):
     totp_code: Optional[str] = Field(default="", min_length=6, max_length=6)
     mfa_recovery_code: Optional[str] = Field(default="", min_length=10, max_length=10)
     captcha: Optional[str] = Field(default="", max_length=2000)
+    email: Optional[str] = Field(default=None, max_length=254)
 
 
 @auth_bp.post("/login")
@@ -156,6 +158,15 @@ async def register(data: AuthRequest):
         security.ratelimit(f"register:{request.ip}:f", 5, 30)
         return {"error": True, "type": "registrationBlocked"}, 403
 
+    # A valid, allowed email is required to sign up
+    email = email_verification.normalize(data.email)
+    if not email_verification.valid_email(email):
+        return {"error": True, "type": "invalidEmail"}, 400
+    if email_verification.domain_blocked(email):
+        return {"error": True, "type": "emailBlocked"}, 403
+    if email_verification.email_in_use(email):
+        return {"error": True, "type": "emailInUse"}, 409
+
     # Make sure username isn't taken or held after someone's rename
     if security.account_exists(data.username, ignore_case=True) or username_change.name_blocked_for(data.username.lower()):
         security.ratelimit(f"register:{request.ip}:f", 5, 30)
@@ -174,7 +185,8 @@ async def register(data: AuthRequest):
             return {"error": True, "type": "invalidCaptcha"}, 403
 
     # Create account
-    security.create_account(data.username, data.password, request.ip)
+    security.create_account(data.username, data.password, request.ip, email=email)
+    await email_verification.send_verification(data.username, email)
 
     # Ratelimit
     security.ratelimit(f"register:{request.ip}:s", 5, 900)

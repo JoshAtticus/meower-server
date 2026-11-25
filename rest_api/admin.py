@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, Literal
 from base64 import b64decode
 from copy import copy
-import time, pymongo
+import time, pymongo, re
 
 import security
 from database import db, get_total_pages, blocked_ips, registration_blocked_ips
@@ -114,6 +114,7 @@ USER_MODERATION_PERMISSIONS = (
     security.AdminPermissions.EDIT_BAN_STATES,
     security.AdminPermissions.DELETE_USERS,
     security.AdminPermissions.VIEW_IPS,
+    security.AdminPermissions.MANAGE_EMAILS,
 )
 
 
@@ -1499,4 +1500,49 @@ async def enable_registration():
     # Add log
     security.add_audit_log("enabled_registration", request.user, request.ip, {})
 
+    return {"error": False}, 200
+
+
+def _require_manage_emails():
+    if not security.has_permission(request.permissions, security.AdminPermissions.MANAGE_EMAILS):
+        abort(403)
+
+
+@admin_bp.get("/users/<username>/email")
+async def get_user_email(username):
+    _require_manage_emails()
+    user = db.usersv0.find_one({"_id": username}, projection={"email": 1, "email_verified": 1, "email_verified_at": 1})
+    if not user:
+        abort(404)
+    return {
+        "error": False,
+        "email": user.get("email"),
+        "verified": bool(user.get("email_verified")),
+        "verified_at": user.get("email_verified_at")
+    }, 200
+
+
+@admin_bp.get("/email-domains")
+async def get_blocked_email_domains():
+    _require_manage_emails()
+    return {"error": False, "domains": [
+        {"domain": d["_id"], "added_by": d.get("added_by"), "added_at": d.get("added_at")}
+        for d in db.email_blacklist.find().sort("_id", 1)
+    ]}, 200
+
+
+@admin_bp.put("/email-domains/<domain>")
+async def block_email_domain(domain):
+    _require_manage_emails()
+    domain = domain.strip().lower().lstrip("@")
+    if not re.fullmatch(r"([a-z0-9\-]{1,63}\.)+[a-z]{2,24}", domain):
+        abort(400)
+    db.email_blacklist.update_one({"_id": domain}, {"$set": {"added_by": request.user, "added_at": int(time.time())}}, upsert=True)
+    return {"error": False}, 200
+
+
+@admin_bp.delete("/email-domains/<domain>")
+async def unblock_email_domain(domain):
+    _require_manage_emails()
+    db.email_blacklist.delete_one({"_id": domain.strip().lower()})
     return {"error": False}, 200

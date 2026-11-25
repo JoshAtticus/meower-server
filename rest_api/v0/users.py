@@ -7,6 +7,7 @@ import uuid
 import time
 
 import security
+import email_verification
 import username_change
 from database import db, get_total_pages
 
@@ -109,6 +110,9 @@ async def update_relationship(username, data: UpdateRelationshipBody):
     # Check authorization
     if not request.user:
         abort(401)
+    if data.state == 1:
+        if resp := email_verification.require_verified(request.user):
+            return resp
 
     # Check ratelimit
     if security.ratelimited(f"relationships:{request.user}"):
@@ -327,6 +331,8 @@ async def get_dm_chat(username):
     # Check authorization
     if not request.user:
         abort(401)
+    if resp := email_verification.require_verified(request.user):
+        return resp
 
     # Check ratelimit
     if security.ratelimited(f"create_chat:{request.user}"):

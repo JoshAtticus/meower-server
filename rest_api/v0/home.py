@@ -5,6 +5,7 @@ from typing import Optional
 import pymongo, copy
 
 import security
+import email_verification
 from database import db, get_total_pages
 from forwarding import resolve_forward
 from uploads import claim_file, file_is_media
@@ -56,6 +57,9 @@ async def create_home_post(data: PostBody):
     # Check authorization
     if not request.user:
         abort(401)
+    if email_verification.uses_custom_emoji(data.content):
+        if resp := email_verification.require_verified(request.user):
+            return resp
 
     if not (request.flags & security.UserFlags.POST_RATELIMIT_BYPASS):
         # Check ratelimit
