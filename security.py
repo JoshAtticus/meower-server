@@ -33,6 +33,8 @@ DEFAULT_USER_SETTINGS = {
     "mode": None,
     "layout": "new",
     "sfx": True,
+    "sfx_scope": "all",
+    "chat_sfx": {},
     "bgm": False,
     "bgm_song": 2,
     "debug": False,
@@ -432,6 +434,13 @@ def update_settings(username, newdata):
             if isinstance(newdata[key], type(default_val)):
                 if key == "favorited_chats" and len(newdata[key]) > 50:
                     newdata[key] = newdata[key][:50]
+                if key == "sfx_scope" and newdata[key] not in ("all", "mentions"):
+                    continue
+                if key == "chat_sfx":
+                    newdata[key] = {
+                        str(chat_id)[:64]: mode for chat_id, mode in list(newdata[key].items())[:200]
+                        if mode in ("all", "mentions")
+                    }
                 
                 updated_user_settings_vals[key] = newdata[key]
 

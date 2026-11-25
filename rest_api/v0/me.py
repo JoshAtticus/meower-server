@@ -40,6 +40,8 @@ class UpdateConfigBody(BaseModel):
     mode: Optional[bool] = Field(default=None)
     layout: Optional[str] = Field(default=None, min_length=1, max_length=256)
     sfx: Optional[bool] = Field(default=None)
+    sfx_scope: Optional[Literal["all", "mentions"]] = Field(default=None)
+    chat_sfx: Optional[dict[str, Literal["all", "mentions"]]] = Field(default=None, max_length=200)
     bgm: Optional[bool] = Field(default=None)
     bgm_song: Optional[int] = Field(default=None)
     debug: Optional[bool] = Field(default=None)
