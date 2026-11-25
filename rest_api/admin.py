@@ -916,7 +916,7 @@ async def restore_user_password(username):
         client.kick()
 
     # Notify user
-    app.supporter.create_post("inbox", username, "Your account password was reverted to a previous password by a moderator. If you did not request this, please secure your account immediately.", category="security")
+    app.supporter.create_post("inbox", username, "Your account password was reverted to a previous password by a moderator. If you did not request this, please contact us to secure your account immediately.", category="security")
 
     # Add log
     security.add_audit_log(
