@@ -260,6 +260,8 @@ def get_account(username, include_config=False):
 
     # Include config
     if include_config:
+        import email_verification
+        account["email_state"] = email_verification.account_state(account["_id"])
         account.update(DEFAULT_USER_SETTINGS)
         user_settings = db.user_settings.find_one({"_id": account["_id"]})
         if user_settings:

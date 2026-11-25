@@ -46,6 +46,9 @@ class CloudlinkServer:
             "PasswordInvalid": "I:011 | Invalid Password",
             "PasswordRecentlyChanged": "E:126 | Password recently changed",
             "InvalidCaptcha": "E:127 | Invalid captcha",
+            "InvalidEmail": "E:130 | Invalid email",
+            "EmailBlocked": "E:131 | Email domain not allowed",
+            "EmailInUse": "E:132 | Email in use",
             "IDExists": "I:015 | Account exists",
             "2FARequired": "I:016 | 2FA Required",
             #"MissingPermissions": "I:017 | Missing permissions",  -- deprecated
@@ -349,6 +352,12 @@ class CloudlinkClient:
                     self.send_statuscode("IDExists", listener)
                 case "invalidCaptcha":
                     self.send_statuscode("InvalidCaptcha", listener)
+                case "invalidEmail":
+                    self.send_statuscode("InvalidEmail", listener)
+                case "emailBlocked":
+                    self.send_statuscode("EmailBlocked", listener)
+                case "emailInUse":
+                    self.send_statuscode("EmailInUse", listener)
                 case "Unauthorized":
                     self.send_statuscode("PasswordInvalid", listener)
                 case "passwordRecentlyChanged":
@@ -432,6 +441,7 @@ class CloudlinkCommands:
                 "username": val.get("username"),
                 "password": val.get("pswd"),
                 "captcha": val.get("captcha", ""),
+                "email": val.get("email"),
             }, listener=listener)
         except:
             print(full_stack())
