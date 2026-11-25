@@ -96,7 +96,8 @@ class Supporter:
         chat_members: list[str] = [],
         reply_to: list[str] = [],
         category: Optional[str] = None,
-        reply_only: bool = False
+        reply_only: bool = False,
+        forwarded_from: Optional[dict] = None
     ) -> tuple[bool, dict]:
         # Create post ID and get timestamp
         post_id = ulid()
@@ -129,6 +130,8 @@ class Supporter:
         }
         if reply_only:
             post["reply_only"] = True
+        if forwarded_from:
+            post["forwarded_from"] = forwarded_from
         if origin == "inbox" and category:
             post["inbox_category"] = category
 
@@ -355,6 +358,20 @@ class Supporter:
             for attachment in post["attachments"]:
                 if isinstance(attachment.get("thumbhash"), (bytes, bytearray)):
                     attachment["thumbhash"] = base64.b64encode(attachment["thumbhash"]).decode()
+
+            # Forwarded message: where it came from, and whether the viewer can jump to it
+            fwd = post.get("forwarded_from")
+            if fwd:
+                fwd = dict(fwd)
+                if fwd["origin"] == "home":
+                    fwd["origin_name"] = "Home"
+                    fwd["can_jump"] = True
+                else:
+                    src = db.chats.find_one({"_id": fwd["origin"], "deleted": False}, projection={"nickname": 1, "members": 1, "type": 1})
+                    member = bool(src and requester and requester in src["members"])
+                    fwd["can_jump"] = member
+                    fwd["origin_name"] = (src.get("nickname") or "a chat") if member and src.get("type") == 0 else ("a chat" if member else None)
+                post["forwarded_from"] = fwd
 
             # Custom emojis
             if post.get("emojis"):

@@ -10,6 +10,7 @@ import security
 import supporter as supporter_module
 import chat_permissions
 from database import db, rdb, get_total_pages
+from forwarding import resolve_forward
 from uploads import claim_file, unclaim_file, file_is_media, expire_file
 from utils import log
 
@@ -63,6 +64,7 @@ class PostBody(BaseModel):
     reply_to: Optional[list[str]] = Field(default_factory=list)
     stickers: Optional[list[str]] = Field(default_factory=list)
     reply_only: Optional[bool] = False
+    forward_of: Optional[str] = Field(default=None, max_length=64)
 
     class Config:
         validate_assignment = True
@@ -687,8 +689,15 @@ async def create_chat_post(chat_id, data: PostBody):
             if chat_id == "livechat":
                 expire_file(attachment_id)
 
-    # Make sure the post has text content or at least 1 attachment or at least 1 sticker
-    if not data.content and not attachments and not data.stickers:
+    # Forwarded messages carry a reference to the original
+    forwarded_from = None
+    if data.forward_of:
+        forwarded_from, forward_error = resolve_forward(data.forward_of, request.user)
+        if forward_error:
+            return forward_error
+
+    # Make sure the post has text content or at least 1 attachment or at least 1 sticker or a forwarded message
+    if not data.content and not attachments and not data.stickers and not forwarded_from:
         abort(400)
 
     dm_request_update = None  # dict to set, or "unset" when the recipient replies
@@ -777,6 +786,7 @@ async def create_chat_post(chat_id, data: PostBody):
         nonce=data.nonce,
         chat_members=(None if chat_id == "livechat" else chat["members"]),
         reply_to=unique_reply_to_post_ids,
+        forwarded_from=forwarded_from,
         reply_only=bool(unique_reply_to_post_ids and (data.reply_only or db.posts.count_documents(
             {"_id": {"$in": unique_reply_to_post_ids}, "reply_to.0": {"$exists": True}}, limit=1)))
     )
