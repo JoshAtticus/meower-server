@@ -54,6 +54,7 @@ class UnifiedSearchQueryArgs(BaseModel):
     q: str = Field(min_length=1, max_length=200)
     page: Optional[int] = Field(default=1, ge=1)
     type: Optional[Literal["all", "posts", "users", "chats"]] = Field(default="all")
+    chat_id: Optional[str] = Field(default=None, max_length=64)  # only search posts in this chat
 
 
 def _member_chat_ids(username):
@@ -75,6 +76,16 @@ async def unified_search(query_args: UnifiedSearchQueryArgs):
     lower_q = q.lower()
     limit = query_args.page * 25
     users, posts, chats = [], [], []
+
+    # Searching inside one chat: members only, posts only
+    only_chat = None
+    if query_args.chat_id:
+        if not request.user or not db.chats.count_documents({
+            "_id": query_args.chat_id, "members": request.user, "deleted": False
+        }, limit=1):
+            abort(404)
+        only_chat = query_args.chat_id
+        query_args.type = "posts"
 
     if query_args.type in ("all", "users"):
         # Users: exact > username prefix > display_name prefix > username
@@ -102,9 +113,11 @@ async def unified_search(query_args: UnifiedSearchQueryArgs):
 
     if query_args.type in ("all", "posts"):
         member_chats = _member_chat_ids(request.user)
+        if only_chat:
+            member_chats = [only_chat]
         # $text only covers Home posts (partial text index); member chats go
         # through the regex path below
-        text_hits = list(db.posts.find(
+        text_hits = [] if only_chat else list(db.posts.find(
             {"post_origin": "home", "isDeleted": False,
              "$text": {"$search": q}},
             {"score": {"$meta": "textScore"}}
@@ -118,13 +131,13 @@ async def unified_search(query_args: UnifiedSearchQueryArgs):
                 "post": post,
                 "_created": post["t"]["e"]
             })
-        if len(text_hits) < 5 or member_chats:
+        if only_chat or len(text_hits) < 5 or member_chats:
             # Partial-word / short-term fallback (and the only path that can
             # reach member-chat posts): escaped contains-regex on Home plus
             # chats the requester is a member of
             now = time.time()
             regex_hits = list(db.posts.find({
-                "post_origin": {"$in": ["home"] + member_chats},
+                "post_origin": {"$in": member_chats if only_chat else ["home"] + member_chats},
                 "isDeleted": False,
                 "p": {"$regex": q_re, "$options": "i"}
             }).sort("t.e", -1).limit(50).max_time_ms(1500))
@@ -169,9 +182,18 @@ async def unified_search(query_args: UnifiedSearchQueryArgs):
         -item.get("_created", 0)))
 
     merged = []
+    chat_names = {}
     for item in items[(query_args.page-1)*25:query_args.page*25]:
         item.pop("_created", None)
         if item["type"] == "post":
+            origin_id = item["post"]["post_origin"]
+            if origin_id not in chat_names:
+                chat = db.chats.find_one({"_id": origin_id}, projection={"nickname": 1, "type": 1})
+                chat_names[origin_id] = chat.get("nickname") if chat and chat.get("type") == 0 else None
+            item["origin"] = {
+                "id": origin_id,
+                "name": "Home" if origin_id == "home" else (chat_names[origin_id] or "Direct messages")
+            }
             item["post"] = app.supporter.parse_posts_v0(
                 [item["post"]], requester=request.user)[0]
         merged.append(item)
