@@ -188,12 +188,19 @@ async def unified_search(query_args: UnifiedSearchQueryArgs):
         if item["type"] == "post":
             origin_id = item["post"]["post_origin"]
             if origin_id not in chat_names:
-                chat = db.chats.find_one({"_id": origin_id}, projection={"nickname": 1, "type": 1})
-                chat_names[origin_id] = chat.get("nickname") if chat and chat.get("type") == 0 else None
-            item["origin"] = {
-                "id": origin_id,
-                "name": "Home" if origin_id == "home" else (chat_names[origin_id] or "Direct messages")
-            }
+                if origin_id == "home":
+                    chat_names[origin_id] = {"id": "home", "name": "Home"}
+                else:
+                    chat = db.chats.find_one({"_id": origin_id}, projection={"nickname": 1, "type": 1, "icon": 1, "icon_color": 1})
+                    is_group = bool(chat and chat.get("type") == 0)
+                    chat_names[origin_id] = {
+                        "id": origin_id,
+                        "name": (chat.get("nickname") if is_group else None) or "Direct messages",
+                        "icon": chat.get("icon", "") if is_group else "",
+                        "icon_color": chat.get("icon_color", "") if is_group else "",
+                        "type": chat.get("type", 0) if chat else 0
+                    }
+            item["origin"] = chat_names[origin_id]
             item["post"] = app.supporter.parse_posts_v0(
                 [item["post"]], requester=request.user)[0]
         merged.append(item)
