@@ -432,8 +432,8 @@ def update_settings(username, newdata):
     for key, default_val in DEFAULT_USER_SETTINGS.items():
         if key in newdata:
             if isinstance(newdata[key], type(default_val)):
-                if key == "favorited_chats" and len(newdata[key]) > 50:
-                    newdata[key] = newdata[key][:50]
+                if key == "favorited_chats" and len(newdata[key]) > 5:
+                    newdata[key] = newdata[key][:5]
                 if key == "sfx_scope" and newdata[key] not in ("all", "mentions"):
                     continue
                 if key == "chat_sfx":
